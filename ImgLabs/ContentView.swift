@@ -15,7 +15,7 @@ struct ContentView: View { // This a custom view, it conatains a body
         
     }
     
-    var body: some View {
+    var body: some View { // some means that body returns an object which conforms to the View type (i.e., don't need to specify exactly what is returned)
         Text("ImgLabs").font(.largeTitle.bold()).padding()
         ZStack { // Z direction stack (i.e., stack items on top of eachother)
             RoundedRectangle(cornerRadius: 5)
