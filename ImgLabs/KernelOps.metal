@@ -85,8 +85,8 @@ kernel void calculateArraySum(
 kernel void calculateSubtractionPow(
     device float* values [[buffer(0)]], // Values to subtract the constant from (a 1D floating point array)
     constant uint32_t& maxLength [[buffer(1)]], // The length of the values array (NOT values.count-1)
-    constant float conToSubtract [[buffer(2)]], // The constant value to subtract (stored in read-only memory)
-    constant float pwr [[buffer(3)]], // The power value
+    constant float& conToSubtract [[buffer(2)]], // The constant value to subtract (stored in read-only memory)
+    constant float& pwr [[buffer(3)]], // The power value
     uint32_t threadId [[thread_position_in_grid]])
 {
     if (threadId < maxLength) {
