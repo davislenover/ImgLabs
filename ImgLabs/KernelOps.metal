@@ -11,6 +11,7 @@ constant uint8_t RED_IDX = 0;
 constant uint8_t BLUE_IDX = 1;
 constant uint8_t GREEN_IDX = 2;
 constant uint8_t MAX_COLOR_VAL = 255;
+constant float ZERO_CHECK_VAL = 0.000001f;
 
 // Metal requires that kernel input arguments must have their locations specified (so the GPU doesn't need to waste time finding them in memory)
 // For arguments, this is known as a argument buffer table ([buffer(0)] indicates look in slot 0 of the table)
@@ -77,17 +78,27 @@ kernel void calculateArraySum(
 }
 
 /*
- Calculates the subtraction of all elements in an array from a constant
+ Calculates the subtraction of all elements in an array from a constant, then use as a base for a power operation
  maxLength should equal the number of elements in the array as well as the number of threads to create
+ It's important that the programmer ensure values entered do not cause a divison by 0 (i.e., any element in the array is 0 and the power is negative)
 */
-kernel void calculateSubtraction(
+kernel void calculateSubtractionPow(
     device float* values [[buffer(0)]], // Values to subtract the constant from (a 1D floating point array)
     constant uint32_t& maxLength [[buffer(1)]], // The length of the values array (NOT values.count-1)
     constant float conToSubtract [[buffer(2)]], // The constant value to subtract (stored in read-only memory)
+    constant float pwr [[buffer(3)]], // The power value
     uint32_t threadId [[thread_position_in_grid]])
 {
     if (threadId < maxLength) {
-        values[threadId] -= conToSubtract;
+        float curVal = values[threadId] - conToSubtract;
+        // Base may be negative which is undefined behaviour for pow func so extract sign and check for odd pwr
+        float result = metal::pow(metal::abs(curVal),pwr);
+        // Check if the result if negative via odd pwr
+        float remainder = metal::abs(metal::fmod(pwr, 2.0f));
+        if (metal::abs(remainder - 1.0f) < ZERO_CHECK_VAL) {
+            result *= metal::sign(curVal);
+        }
+        values[threadId] = result;
     }
 }
 
