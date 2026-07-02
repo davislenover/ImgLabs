@@ -26,7 +26,7 @@ public actor MetalRunner {
             pipelines.append(pipeline);
             kernelEncodingLogics.append(encodingLogic);
         }
-        guard let commandBuffer = await context.getQueue().makeCommandBuffer() else {
+        guard let commandBuffer = context.getQueue().makeCommandBuffer() else {
             throw KernelEngineError.failedToCreateComputeCommandBuffer;
         }
         

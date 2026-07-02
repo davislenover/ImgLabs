@@ -43,7 +43,7 @@ struct ContentView: View { // This a custom view, it conatains a body
                     for selectedURL in openPanel.urls { // Multiple images
                         if let nsImage = NSImage(contentsOf: selectedURL),
                            let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            let newImage = await ImageData(img: cgImage); // Spawned on another thread
+                            let newImage = ImageData(img: cgImage);
                             await MainActor.run { self.loadedImageList.append(newImage); } // Context switch back to main ui thread to append, thus forcing view update given the array is a state variable
                             print("Loaded an Image!\n");
                         }

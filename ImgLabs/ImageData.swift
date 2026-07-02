@@ -6,9 +6,10 @@
 //
 
 import Foundation
+import Metal
 import CoreGraphics
 
-class ImageData : Identifiable { // Identifiable denotes to Swift that ImageData objects can be distinct from each other
+class ImageData : Identifiable, MTBufable { // Identifiable denotes to Swift that ImageData objects can be distinct from each other
     let id = UUID(); // Meant to disern different ImageData instances
     
     private static let NUM_OF_VALUES_IN_PIXEL: Int = 4;
@@ -18,7 +19,7 @@ class ImageData : Identifiable { // Identifiable denotes to Swift that ImageData
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
     // Constructor for class
-    init(img : CGImage) async { // async indicates to compiler that running thread may wait here for a result
+    init(img : CGImage) {
         // Extract raw pixel data
         self.cgImage = img;
         self.ingestImage(imgToIngest: img);
@@ -62,6 +63,17 @@ class ImageData : Identifiable { // Identifiable denotes to Swift that ImageData
         );
         self.imageContext?.draw(imgToIngest, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)));
         // bitMapData should now contain the raw RGBA values
+    }
+    
+    /// Converts raw pixel data from the image ingested on creation to an MTLBuffer
+    public func toMTLBuffer(_ device : MTLDevice) async throws -> MTLBuffer {
+        guard let pixData = self.pixelData, let imgContext = self.imageContext else {
+            throw ImageError.noPixelData;
+        }
+        guard let newBuf : MTLBuffer = device.makeBuffer(bytes: pixData, length: self.imageContext!.width * imgContext.height * 4, options: .storageModeShared) else {
+            throw ImageError.failedToConvertDataToMTLBuffer;
+        }
+        return newBuf;
     }
     
     public func printRawData(_ pixelX: UInt32, _ pixelY: UInt32) {

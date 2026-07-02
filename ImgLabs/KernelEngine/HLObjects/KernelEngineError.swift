@@ -9,6 +9,7 @@ public enum KernelEngineError: Error {
     case kernelFunctionNotFound(name: String)
     case deviceFailedToCreateKernel(name: String)
     case failedToBindArguments(argumentsNotBound: [String])
+    case failedToAllocateMTLBufferMemory
     case failedToCreateComputeCommandBuffer
     case failedToCreateComputeCommandEncoder
     case failedToDispatchThreads

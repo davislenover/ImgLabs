@@ -11,8 +11,8 @@ import Metal
 /// A compute engine context actor which handles the creation and caching of Metal compute pipeline states
 /// All concurrent/parallel access to this class is serialized, meaning only one thread may operate on the class at any given time
 public actor MetalComputeContext {
-    private let device: MTLDevice;
-    private let queue: MTLCommandQueue;
+    private let device: MTLDevice; // MTLDevice is thread-safe
+    private let queue: MTLCommandQueue; // MTLCommandQueue is thread-safe
     private let library: MTLLibrary;
     
     // Hashmap with function name as key, value is the corresponding pipeline state
@@ -58,9 +58,13 @@ public actor MetalComputeContext {
         return try await compilationTask.value;
     }
     
-    /// Gets the Metal command queue, guarenteed to not be nil if the MetalComputeContext instance was created
+    /// Gets the Metal command queue, guarenteed to not be nil if the MetalComputeContext instance was created. Can be called without lock on actor object
     /// - Returns: Command queue of type MTLCommandQueue
-    public func getQueue() -> MTLCommandQueue {return self.queue;}
+    public nonisolated func getQueue() -> MTLCommandQueue {return self.queue;}
+    
+    /// Gets the Metal device this context is associated with, guarenteed to not be nil if the MetalComputeContext instance was created. Can be called without lock on actor object
+    /// - Returns: Device of type MTLDevice
+    public nonisolated func getDevice() -> MTLDevice {return self.device;}
     
 }
 

@@ -15,7 +15,7 @@ public protocol ComputeKernel {
     func getFunctionName() -> String;
     
     /// Abstract lambda logic which the conforming object binds arguments and sets up the thread count for dispatch of the corresponding kernel
-    /// This function may also throw errors if encoding is not succsesful
+    /// This function may also throw errors if encoding is not succsesful. Assumes setComputePipelineState was called on the given encoder with the given pipeline prior
     func encode() -> ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> ());
 }
 
