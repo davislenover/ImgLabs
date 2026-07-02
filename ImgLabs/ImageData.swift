@@ -18,7 +18,7 @@ class ImageData : Identifiable { // Identifiable denotes to Swift that ImageData
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
     // Constructor for class
-    init(img : CGImage) async { // async indicates this function may be ran asyncronously (on a separate thread)
+    init(img : CGImage) async { // async indicates to compiler that running thread may wait here for a result
         // Extract raw pixel data
         self.cgImage = img;
         self.ingestImage(imgToIngest: img);
