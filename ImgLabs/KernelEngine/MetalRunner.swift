@@ -8,7 +8,13 @@
 import Metal
 
 public actor MetalRunner {
-    public func run(from context : MetalComputeContext, for kernels : [ComputeKernel]) async throws -> () {
+    /// Takes all kernels and executes them against a MetalComputeContext
+    ///  - Parameters:
+    ///     - from: The MetalComputeContext object to get the device, pipeline state (per kernel) and queue from
+    ///     - kernels: The list of compute kernels to execute
+    ///     - cb : The callback function to call once all kernels in the list finish execution (will outlive this function, is thread-safe)
+    /// - Throws: KernelEngineError if setup fails
+    public static func runCompute(from context : MetalComputeContext, for kernels : [ComputeKernel], callback cb : @escaping @Sendable (MTLCommandBuffer) -> ()) async throws -> () {
         // await may pick back up execution on a different thread...Metal objects arn't inherently thread safe
         // thus, create all objects (thread doesn't matter), then only when modifying those objects, use the same thread
         var pipelines: [MTLComputePipelineState] = [];
@@ -34,8 +40,7 @@ public actor MetalRunner {
             try encoding(encoder, pipeline);
             encoder.endEncoding();
         }
-        
+        commandBuffer.addCompletedHandler(cb);
         commandBuffer.commit(); // Run all the work on the GPU
-        
     }
 }
