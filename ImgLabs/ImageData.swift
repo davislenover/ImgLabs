@@ -5,21 +5,34 @@
 //  Created by Davis Lenover on 2026-03-04.
 //
 
+import Foundation
 import CoreGraphics
 
-class ImageData {
+class ImageData : Identifiable { // Identifiable denotes to Swift that ImageData objects can be distinct from each other
+    let id = UUID(); // Meant to disern different ImageData instances
     
     private static let NUM_OF_VALUES_IN_PIXEL: Int = 4;
     
     private var imageContext: CGContext?; // ? indicates an optional, i.e., this could be nil
+    private var cgImage: CGImage?;
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
     // Constructor for class
-    init(img : CGImage) {
+    init(img : CGImage) async { // async indicates this function may be ran asyncronously (on a separate thread)
         // Extract raw pixel data
+        self.cgImage = img;
         self.ingestImage(imgToIngest: img);
     }
     
+    deinit {
+        if let pixelData = self.pixelData { // Check for null
+            pixelData.deallocate();
+        }
+    }
+    
+    public func getCGImage() -> CGImage? {
+        return self.cgImage;
+    }
 
     /// Extracts the raw pixel data from the image, stores it in pixelData and saves an imageContext with all other properties about the image
     /// - Parameter imgToIngest: An image of type CGImage
@@ -50,4 +63,21 @@ class ImageData {
         self.imageContext?.draw(imgToIngest, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)));
         // bitMapData should now contain the raw RGBA values
     }
+    
+    public func printRawData(_ pixelX: UInt32, _ pixelY: UInt32) {
+        // Safely unwrap the optional pointer
+        guard let buffer = self.pixelData else { return; }
+        // Multiply by 4 because 1 pixel = 4 bytes (RGBA)
+        let bytesPerRow = self.imageContext!.width * 4;
+        let pixelIndex = (Int(pixelY) * bytesPerRow) + (Int(pixelX) * 4);
+        // Read directly from the raw pointer using array syntax
+        let pixel: [UInt8] = [
+            buffer[pixelIndex],     // Byte 0
+            buffer[pixelIndex + 1], // Byte 1
+            buffer[pixelIndex + 2], // Byte 2
+            buffer[pixelIndex + 3]  // Byte 3
+        ];
+        print(pixel);
+    }
+    
 }

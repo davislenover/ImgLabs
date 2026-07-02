@@ -1,3 +1,10 @@
 @startuml
-Alice -> Bob: test
+
+' ComputeKernel is a protocol which requires a class implement an encode() method
+' This encode method is passed a command encoder and a pipeline state which allows the implementing class to populate the buffer arguments for a kernel and setup how many threads need to be dispatched
+' ComputeKernel also requires the implementing class make the kernel function name it will use known
+' ComputeKernel exists to handle configuration of kernels, given each class will have it's own logic on how it wants to call kernels
+
+' Note that allocating device memory is NOT handled by Computekernels rather, buffers will be passed to them (then the ComputeKernels can figure out where it goes in the function call)
+
 @enduml
