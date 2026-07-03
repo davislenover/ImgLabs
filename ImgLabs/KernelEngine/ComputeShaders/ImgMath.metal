@@ -20,7 +20,7 @@ constant uint8_t MAX_COLOR_VAL = 255;
  
  rgbaArray is a 1D array where each set of 4 elements makes up RGBA values (each element is 1 byte) for one pixel, assumes alpha is premultiplied to RGB values (thus, don't need to re-multiply alpha to color channels)
  */
-kernel void convertToGrayScale(constant uchar* rgbaArray [[buffer(0)]], constant float4* backgroundColor [[buffer(1)]], constant float4* rgbWeights [[buffer(2)]], device float* grayScaleResult [[buffer(3)]], constant uint32_t* numOfPixels [[buffer(4)]], uint32_t threadId [[thread_position_in_grid]]) {
+kernel void convertToGrayScale(constant uint8_t* rgbaArray [[buffer(0)]], constant float4* backgroundColor [[buffer(1)]], constant float4* rgbWeights [[buffer(2)]], device float* grayScaleResult [[buffer(3)]], constant uint32_t* numOfPixels [[buffer(4)]], uint32_t threadId [[thread_position_in_grid]]) {
     if (threadId >= *numOfPixels) {return;}
     // Every thread will be responsible for one pixel
     uint32_t baseIdx = threadId * 4; // Calculate base offset for given pixel

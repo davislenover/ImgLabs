@@ -84,7 +84,7 @@ struct ContentView: View { // This a custom view, it conatains a body
                 // Loaded image list is not empty, display list
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(loadedImageList) { item in
+                        ForEach(loadedImageList) { item in // Item is of type ImageData
                             // Render the thumbnail (Convert CGImage/NSImage to SwiftUI Image)
                             Image(nsImage: NSImage(cgImage: item.getCGImage()!, size: .zero))
                                 .resizable()
@@ -93,6 +93,14 @@ struct ContentView: View { // This a custom view, it conatains a body
                                 .clipped()
                                 .cornerRadius(8)
                                 .shadow(radius: 2)
+                                .onTapGesture {
+                                    Task {
+                                        print("Tapped on an item!");
+                                        let computeContext : MetalComputeContext = MetalComputeContext()!;
+                                        async let grayScaleTest : GrayScaleConvert = GrayScaleConvert(item,computeContext);
+                                        try await MetalRunner.runCompute(from: computeContext, for: [grayScaleTest], callback: {_ in print("Done!")});
+                                    }
+                                }
                         }
                     }.padding()
                 }.transition(.move(edge: .bottom).combined(with: .opacity))

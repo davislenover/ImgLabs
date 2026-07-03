@@ -70,10 +70,20 @@ class ImageData : Identifiable, MTBufable { // Identifiable denotes to Swift tha
         guard let pixData = self.pixelData, let imgContext = self.imageContext else {
             throw ImageError.noPixelData;
         }
-        guard let newBuf : MTLBuffer = device.makeBuffer(bytes: pixData, length: self.imageContext!.width * imgContext.height * 4, options: .storageModeShared) else {
+        // Multiply by the size of UInt8 in bytes (which should be 1 byte) as length specifies the number of bytes to copy
+        guard let newBuf : MTLBuffer = device.makeBuffer(bytes: pixData, length: imgContext.width * imgContext.height * 4 * MemoryLayout<UInt8>.size, options: .storageModeShared) else {
             throw ImageError.failedToConvertDataToMTLBuffer;
         }
         return newBuf;
+    }
+    
+    /// Returns the number of elements within the raw pixel data MTLBuffer array
+    /// It's the number of pixels * 4 (4 channels per pixel) -- Each channel value s stored as a UInt8 type
+    public func MTLBufferSize() throws -> UInt32 {
+        guard let imgCtx = self.imageContext else {
+            throw ImageError.noPixelData;
+        }
+        return UInt32(imgCtx.width * imgCtx.height * 4);
     }
     
     public func printRawData(_ pixelX: UInt32, _ pixelY: UInt32) {

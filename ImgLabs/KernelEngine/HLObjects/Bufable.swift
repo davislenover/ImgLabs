@@ -15,5 +15,8 @@ public protocol MTBufable {
     ///     - device: The given device to allocate the buffer on
     /// - Returns: The buffer as an MTLBuffer type
     func toMTLBuffer(_ device: MTLDevice) async throws -> MTLBuffer;
+    
+    /// Gets the expected number of elements that the resulting MTLBuffer (from toMTLBuffer) was allocated for
+    func MTLBufferSize() throws -> UInt32;
 }
 

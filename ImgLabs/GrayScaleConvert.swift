@@ -8,7 +8,9 @@
 import Foundation
 import Metal
 
-class GrayScaleConvert : ComputeKernel {
+/// A class which defines to other classes a kernel on how to convert an image of type ImageData to a 1D array of values representing the grayscale image
+/// Is thread-safe, after init no values change
+class GrayScaleConvert : ComputeKernel, Sendable {
     
     private let rgbaBuf : MTLBuffer; // UChar array holding RGBA values, single photo
     private let grayScaleBuf : MTLBuffer; // Resulting UChar array after conerting to grayscale
@@ -17,6 +19,7 @@ class GrayScaleConvert : ComputeKernel {
     private static let BLUE_WEIGHT : Float = 0.114;
     private static let rgbWeights : SIMD4<Float> = .init(RED_WEIGHT, GREEN_WEIGHT, BLUE_WEIGHT, 0.0); // 0.0 so ending doesn't affect calculation
     private static let backgroundColor : SIMD4<Float> = .init(0.0, 0.0, 0.0, 1.0);
+    private var numOfPixels : UInt32;
     
     /// Creates an instance of GrayScaleConvert
     /// - Parameters:
@@ -27,7 +30,10 @@ class GrayScaleConvert : ComputeKernel {
         let devToAlloc : MTLDevice = context.getDevice();
         self.rgbaBuf = try await img.toMTLBuffer(devToAlloc);
         // Grayscale result should contain one element per pixel in rgbaBuf (which has 4 elements per pixel)
-        guard let resultAlloc = devToAlloc.makeBuffer(length: self.rgbaBuf.length/4, options: [.storageModeShared]) else {
+        self.numOfPixels = try img.MTLBufferSize()/4;
+        // Note that length argument is specified in bytes, the metal argument is float which one float is 4 bytes (i.e., each resulting pixel grayscale value is 4 bytes)
+        // Thus, multiply number of pixels by the size of a Float
+        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(self.numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
         self.grayScaleBuf = resultAlloc;
@@ -44,7 +50,7 @@ class GrayScaleConvert : ComputeKernel {
             // Setup memory
             var rgbWeights : SIMD4<Float> = Self.rgbWeights;
             var bkgColor : SIMD4<Float> = Self.backgroundColor;
-            var numOfPixels : UInt32 = UInt32(self.rgbaBuf.length / MemoryLayout<UInt8>.stride);
+            var numOfPixels : UInt32 = self.numOfPixels;
             // setBytes copies small memory directly to the encoded command (i.e., it's inlined thus being fast)
             encoder.setBytes(&rgbWeights, length: MemoryLayout.size(ofValue: rgbWeights), index: 2);
             encoder.setBytes(&bkgColor, length: MemoryLayout.size(ofValue: bkgColor), index: 1);
@@ -54,7 +60,7 @@ class GrayScaleConvert : ComputeKernel {
             
             // Setup thread dispatch
             // Determine the total 1D grid size (total number of pixel threads to run)
-            let totalPixelThreads = self.rgbaBuf.length / MemoryLayout<UInt8>.stride;
+            let totalPixelThreads = Int(self.numOfPixels);
             let gridExecutionSize = MTLSize(width: totalPixelThreads, height: 1, depth: 1);
 
             // Query the pipeline state to discover the absolute maximum allocation permitted by the GPU hardware
@@ -67,7 +73,6 @@ class GrayScaleConvert : ComputeKernel {
             encoder.dispatchThreads(gridExecutionSize, threadsPerThreadgroup: threadsPerGroup);
         });
     }
-    
     
 }
 
