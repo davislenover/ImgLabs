@@ -7,4 +7,44 @@
 
 ' Note that allocating device memory is NOT handled by Computekernels rather, buffers will be passed to them (then the ComputeKernels can figure out where it goes in the function call)
 
+interface ComputeKernel <<protocol>> {
+    + getFunctionName() : String 
+    + encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
+}
+
+interface MTBufable <<protocol>> {
+    + toMTLBuffer(_ device: MTLDevice) : MTLBuffer <<async>> <<throws>>
+    + MTLBufferSize() : UInt32 <<throws>>
+}
+
+class MetalContext <<actor>> {
+ - pipelineCache : [String:Task<MTLComputePipelineState,Error>]
+ + getPipelineState(for computeObject: ComputeKernel) : MTLComputePipelineState <<async>> <<throws>>
+ + getQueue() : MTLCommandQueue <<nonisolated>>
+ + getDevice() : MTLDevice <<nonisolated>>
+}
+
+class MetalRunner <<actor>> {
+        + {static} runCompute(from context : MetalComputeContext, for kernels : [ComputeKernel], callback cb : @escaping @Sendable (MTLCommandBuffer) -> ()) <<async>> <<throws>>
+}
+
+class ImageData <<Identifiable, MTBufable>> {
+    - pixelData : UnsafeMutablePointer<UInt8>
+    + init(_ img : CGImage) : ImageData
+}
+
+class GrayScaleConvert <<ComputeKernel, Sendable>> {
+    - rgbaBuf : MTLBuffer
+    - grayScaleBuf : MTLBuffer
+    + init(_ img : MTBufable, _ context : MetalComputeContext) <<async>> <<throws>>
+}
+
+
+MetalContext - ComputeKernel
+GrayScaleConvert - MTBufable
+GrayScaleConvert .u.|> ComputeKernel
+ImageData .u.|> MTBufable
+MetalRunner - MetalContext
+MetalRunner -u- ComputeKernel
+
 @enduml
