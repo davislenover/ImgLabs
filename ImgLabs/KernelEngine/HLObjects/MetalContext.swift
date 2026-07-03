@@ -15,6 +15,8 @@ public actor MetalComputeContext {
     private let queue: MTLCommandQueue; // MTLCommandQueue is thread-safe
     private let library: MTLLibrary;
     
+    private var KernelReg : KernelRegistry = KernelRegistry(); // House ComputeKernel creation functions as factory
+    
     // Hashmap with function name as key, value is the corresponding pipeline state
     private var pipelineCache: [String: Task<MTLComputePipelineState, Error>] = [:];
     
@@ -32,7 +34,7 @@ public actor MetalComputeContext {
     /// Gets the compute pipeline state object for a given function
     /// - Parameters: functionName
     public func getPipelineState(for computeObject: ComputeKernel) async throws -> MTLComputePipelineState {
-        let functionName = await computeObject.getFunctionName();
+        let functionName = type(of: computeObject).getFunctionName(); // static function call
         
         // If a task already exists (either running or finished), await it directly
         if let existingTask = self.pipelineCache[functionName] {
@@ -56,6 +58,16 @@ public actor MetalComputeContext {
         
         // Await the task completion
         return try await compilationTask.value;
+    }
+    
+    /// Registers a ComputeKernel initalization function with the context object to query for later
+    public func registerKernel(factory : any ComputeKernelCreatable) async {
+        await self.KernelReg.registerKernel(kernelFactory: factory);
+    }
+    
+    /// Initalizes the corresponding ComputeKernel object
+    public func getKernel(typ : any ComputeKernelCreatable, buf : any MTBufable) async throws -> ComputeKernel {
+        return try await (self.KernelReg.getKernel(name: type(of:typ).getFactoryName()))(buf, self);
     }
     
     /// Gets the Metal command queue, guarenteed to not be nil if the MetalComputeContext instance was created. Can be called without lock on actor object

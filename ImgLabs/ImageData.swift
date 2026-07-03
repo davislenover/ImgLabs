@@ -9,8 +9,8 @@ import Foundation
 import Metal
 import CoreGraphics
 
-class ImageData : Identifiable, MTBufable { // Identifiable denotes to Swift that ImageData objects can be distinct from each other
-    let id = UUID(); // Meant to disern different ImageData instances
+public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Swift that ImageData objects can be distinct from each other
+    public let id = UUID(); // Meant to disern different ImageData instances
     
     private static let NUM_OF_VALUES_IN_PIXEL: Int = 4;
     

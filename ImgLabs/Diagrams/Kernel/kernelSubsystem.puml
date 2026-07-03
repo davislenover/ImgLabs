@@ -5,23 +5,40 @@
 ' ComputeKernel also requires the implementing class make the kernel function name it will use known
 ' ComputeKernel exists to handle configuration of kernels, given each class will have it's own logic on how it wants to call kernels
 
-' Note that allocating device memory is NOT handled by Computekernels rather, buffers will be passed to them (then the ComputeKernels can figure out where it goes in the function call)
+' Note that allocating device memory is NOT handled by Computekernels rather, buffers will be passed to them by their corresponding factory classes (then the ComputeKernels can figure out where it goes in the function call)
 
 interface ComputeKernel <<protocol>> {
-    + getFunctionName() : String 
-    + encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
+    + {static} {abstract} getFunctionName() : String
+    + {abstract} encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
 }
+
+note top of ComputeKernel
+    Defines a class which knows how to encode a kernel shader given buffers and dispatch threads
+    Has a corresponding factory class (ComputeKernelCreatable) which instanciates the class
+end note
+
+interface ComputeKernelCreatable <<protocol>> {
+    + {static} {abstract} getFactoryName() : String
+    + {abstract} createKernel(bufable: MTBufable, context: MetalComputeContext) : ComputeKernel <<async>> <<throws>>
+}
+
+note bottom of ComputeKernelCreatable
+    Defines a factory class for a corresponding ComputeKernel,
+    Responsible for allocating buffer memory on device based on parameters given
+end note
 
 interface MTBufable <<protocol>> {
-    + toMTLBuffer(_ device: MTLDevice) : MTLBuffer <<async>> <<throws>>
-    + MTLBufferSize() : UInt32 <<throws>>
+    + {abstract} toMTLBuffer(_ device: MTLDevice) : MTLBuffer <<async>> <<throws>>
+    + {abstract} MTLBufferSize() : UInt32 <<throws>>
 }
 
-class MetalContext <<actor>> {
+class MetalComputeContext <<actor>> {
  - pipelineCache : [String:Task<MTLComputePipelineState,Error>]
+ - kernelRegistry : [String:ComputeKernelCreatable]
  + getPipelineState(for computeObject: ComputeKernel) : MTLComputePipelineState <<async>> <<throws>>
  + getQueue() : MTLCommandQueue <<nonisolated>>
  + getDevice() : MTLDevice <<nonisolated>>
+ + getKernel(typ : ComputeKernelCreateable, buf : MTBufable) : ComputeKernel <<async>> <<throws>>
 }
 
 class MetalRunner <<actor>> {
@@ -36,15 +53,17 @@ class ImageData <<Identifiable, MTBufable>> {
 class GrayScaleConvert <<ComputeKernel, Sendable>> {
     - rgbaBuf : MTLBuffer
     - grayScaleBuf : MTLBuffer
-    + init(_ img : MTBufable, _ context : MetalComputeContext) <<async>> <<throws>>
 }
 
+class GrayScaleKernelFactory <<ComputeKernelCreatable, Sendable>> {
+}
 
-MetalContext - ComputeKernel
-GrayScaleConvert - MTBufable
+ComputeKernelCreatable .l.> ComputeKernel
+ComputeKernelCreatable .r.> MTBufable
+ComputeKernelCreatable .u.> MetalComputeContext
 GrayScaleConvert .u.|> ComputeKernel
+GrayScaleKernelFactory .u.|> ComputeKernelCreatable
 ImageData .u.|> MTBufable
-MetalRunner - MetalContext
-MetalRunner -u- ComputeKernel
+MetalRunner .l.> MetalComputeContext
 
 @enduml

@@ -12,6 +12,8 @@ import Metal
 /// Is thread-safe, after init no values change
 class GrayScaleConvert : ComputeKernel, Sendable {
     
+    private nonisolated static let name : String = "convertToGrayScale"; // Matches the Metal definition
+    
     private let rgbaBuf : MTLBuffer; // UChar array holding RGBA values, single photo
     private let grayScaleBuf : MTLBuffer; // Resulting UChar array after conerting to grayscale
     private static let RED_WEIGHT : Float = 0.299;
@@ -23,25 +25,16 @@ class GrayScaleConvert : ComputeKernel, Sendable {
     
     /// Creates an instance of GrayScaleConvert
     /// - Parameters:
-    ///     - img: Contains a 1D array of values which can be allocated on GPU memory
-    ///     - context: The MetalComputeContext object which houses the device object
-    init(_ img : MTBufable, _ context : MetalComputeContext) async throws {
-        // Get raw pixel values, convert to MTLBuffer (put in shared memory)
-        let devToAlloc : MTLDevice = context.getDevice();
-        self.rgbaBuf = try await img.toMTLBuffer(devToAlloc);
-        // Grayscale result should contain one element per pixel in rgbaBuf (which has 4 elements per pixel)
-        self.numOfPixels = try img.MTLBufferSize()/4;
-        // Note that length argument is specified in bytes, the metal argument is float which one float is 4 bytes (i.e., each resulting pixel grayscale value is 4 bytes)
-        // Thus, multiply number of pixels by the size of a Float
-        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(self.numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
-            throw KernelEngineError.failedToAllocateMTLBufferMemory;
-        }
-        self.grayScaleBuf = resultAlloc;
+    ///     - rgbBufArr: Contains a 1D array of values on a Metal buffer representing the premultiplied RGBA values of the pixels
+    ///     - resultBufArr: The resulting buffer -- i.e., stores the result of the RGBA pixels to grayscale values (one element per pixel)
+    ///     - pixelCount: The number of RGBA values
+    init(rgbBufArr : MTLBuffer, resultBufArr : MTLBuffer, pixelCount: UInt32) throws {
+        self.rgbaBuf = rgbBufArr;
+        self.grayScaleBuf = resultBufArr;
+        self.numOfPixels = pixelCount;
     }
     
-    func getFunctionName() -> String {
-        return "convertToGrayScale"; // Matches the Metal definition
-    }
+    nonisolated static func getFunctionName() -> String {return Self.name;}
     
     /// Sets up conversion to grayscale kernel. Encodes internal weights, a black background color and the ingested image raw pixel values along with the out result
     /// One thread per pixel, will dispatch the maximum width allowed per thread group
@@ -73,6 +66,28 @@ class GrayScaleConvert : ComputeKernel, Sendable {
             encoder.dispatchThreads(gridExecutionSize, threadsPerThreadgroup: threadsPerGroup);
         });
     }
+}
+
+
+class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
+    static func getFactoryName() -> String {return GrayScaleConvert.getFunctionName();}
     
+    func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> ComputeKernel {
+        // Get raw pixel values, convert to MTLBuffer (put in shared memory)
+        let devToAlloc : MTLDevice = context.getDevice();
+        guard let rgbBuf : MTLBuffer = try? await bufable.toMTLBuffer(devToAlloc) else {
+            throw KernelEngineError.failedToAllocateMTLBufferMemory;
+        }
+        // Grayscale result should contain one element per pixel in rgbaBuf (which has 4 elements per pixel)
+        guard let numOfPixels : UInt32 = try? bufable.MTLBufferSize()/4 else {
+            fatalError("Failed to get number of pixels");
+        }
+        // Note that length argument is specified in bytes, the metal argument is float which one float is 4 bytes (i.e., each resulting pixel grayscale value is 4 bytes)
+        // Thus, multiply number of pixels by the size of a Float
+        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
+            throw KernelEngineError.failedToAllocateMTLBufferMemory;
+        }
+        return try GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
+    }
 }
 

@@ -96,8 +96,10 @@ struct ContentView: View { // This a custom view, it conatains a body
                                 .onTapGesture {
                                     Task {
                                         print("Tapped on an item!");
+                                        let factoryGrayScale = GrayScaleKernelFactory();
                                         let computeContext : MetalComputeContext = MetalComputeContext()!;
-                                        async let grayScaleTest : GrayScaleConvert = GrayScaleConvert(item,computeContext);
+                                        await computeContext.registerKernel(factory: factoryGrayScale);
+                                        async let grayScaleTest : ComputeKernel = computeContext.getKernel(typ: factoryGrayScale, buf: item);
                                         try await MetalRunner.runCompute(from: computeContext, for: [grayScaleTest], callback: {_ in print("Done!")});
                                     }
                                 }

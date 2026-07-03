@@ -13,5 +13,6 @@ public enum KernelEngineError: Error {
     case failedToCreateComputeCommandBuffer
     case failedToCreateComputeCommandEncoder
     case failedToDispatchThreads
+    case failedToFindKernelCreateFunction(name: String)
 }
 
