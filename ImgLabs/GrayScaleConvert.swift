@@ -37,14 +37,18 @@ class GrayScaleConvert : ComputeKernel {
         return "convertToGrayScale"; // Matches the Metal definition
     }
     
+    /// Sets up conversion to grayscale kernel. Encodes internal weights, a black background color and the ingested image raw pixel values along with the out result
+    /// One thread per pixel, will dispatch the maximum width allowed per thread group
     func encode() -> (any MTLComputeCommandEncoder, any MTLComputePipelineState) throws -> () {
         return ({ (encoder, pipelineState) in
             // Setup memory
             var rgbWeights : SIMD4<Float> = Self.rgbWeights;
             var bkgColor : SIMD4<Float> = Self.backgroundColor;
+            var numOfPixels : UInt32 = UInt32(self.rgbaBuf.length / MemoryLayout<UInt8>.stride);
             // setBytes copies small memory directly to the encoded command (i.e., it's inlined thus being fast)
             encoder.setBytes(&rgbWeights, length: MemoryLayout.size(ofValue: rgbWeights), index: 2);
             encoder.setBytes(&bkgColor, length: MemoryLayout.size(ofValue: bkgColor), index: 1);
+            encoder.setBytes(&numOfPixels, length: MemoryLayout.size(ofValue: numOfPixels), index: 4);
             encoder.setBuffer(self.rgbaBuf, offset: 0, index: 0);
             encoder.setBuffer(self.grayScaleBuf, offset: 0, index: 3);
             

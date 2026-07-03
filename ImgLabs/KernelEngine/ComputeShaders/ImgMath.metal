@@ -20,12 +20,13 @@ constant uint8_t MAX_COLOR_VAL = 255;
  
  rgbaArray is a 1D array where each set of 4 elements makes up RGBA values (each element is 1 byte) for one pixel
  */
-kernel void convertToGrayScale(constant uchar* rgbaArray [[buffer(0)]], constant float4* backgroundColor [[buffer(1)]], constant float4* rgbWeights [[buffer(2)]], device float* grayScaleResult [[buffer(3)]], uint32_t threadId [[thread_position_in_grid]]) {
+kernel void convertToGrayScale(constant uchar* rgbaArray [[buffer(0)]], constant float4* backgroundColor [[buffer(1)]], constant float4* rgbWeights [[buffer(2)]], device float* grayScaleResult [[buffer(3)]], constant uint32_t* numOfPixels [[buffer(4)]], uint32_t threadId [[thread_position_in_grid]]) {
+    if (threadId >= *numOfPixels) {return;}
     // Every thread will be responsible for one pixel
     uint32_t baseIdx = threadId * 4; // Calculate base offset for given pixel
     // Normalize alpha value between 0 and 1
     float normAlpha = ((float) rgbaArray[baseIdx+ALPHA_IDX]) / MAX_COLOR_VAL;
-    float4 colorVals = float4((float)rgbaArray[baseIdx+RED_IDX],(float)rgbaArray[baseIdx+BLUE_IDX], (float)rgbaArray[baseIdx+GREEN_IDX],1.0f);
+    float4 colorVals = float4((float)rgbaArray[baseIdx+RED_IDX],(float)rgbaArray[baseIdx+GREEN_IDX], (float)rgbaArray[baseIdx+BLUE_IDX],1.0f);
     float4 blendedChannels = (colorVals * normAlpha) + (*backgroundColor * (1.0f - normAlpha)); // Metal automatically recognizes to multiply vector by scalar
     // A*B + C*D + E*F
     grayScaleResult[threadId] = metal::dot(blendedChannels,*rgbWeights);
