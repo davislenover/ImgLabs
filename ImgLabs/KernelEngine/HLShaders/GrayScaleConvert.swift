@@ -10,16 +10,16 @@ import Metal
 
 /// A class which defines to other classes a kernel on how to convert an image of type ImageData to a 1D array of values representing the grayscale image
 /// Is thread-safe, after init no values change
-actor GrayScaleConvert : ComputeKernel, Sendable {
+public actor GrayScaleConvert : ComputeKernel, Sendable {
     
     private let observerStore : ObserverStore = ObserverStore();
     
     /// Observe for a [Float] type
-    func addObserver<O: ResultObserver>(_ observer: O) async {
+    public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
     
-    func notifyObservers() async {
+    public func notifyObservers() async {
         // Get result
         let rawPtr : UnsafeMutableRawPointer = self.grayScaleBuf.contents();
         let length : Int = self.grayScaleBuf.length / MemoryLayout<Float>.stride;
@@ -50,11 +50,11 @@ actor GrayScaleConvert : ComputeKernel, Sendable {
         self.numOfPixels = pixelCount;
     }
     
-    nonisolated static func getFunctionName() -> String {return Self.name;}
+    nonisolated public static func getFunctionName() -> String {return Self.name;}
     
     /// Sets up conversion to grayscale kernel. Encodes internal weights, a black background color and the ingested image raw pixel values along with the out result
     /// One thread per pixel, will dispatch the maximum width allowed per thread group
-    nonisolated func encode() async -> (any MTLComputeCommandEncoder, any MTLComputePipelineState)-> () {
+    nonisolated public func encode() async -> (any MTLComputeCommandEncoder, any MTLComputePipelineState)-> () {
         let rgbaInput : MTLBuffer = await self.rgbaBuf;
         let grayScaleOutput : MTLBuffer = await self.grayScaleBuf;
         var rgbWeights : SIMD4<Float> = await Self.rgbWeights;
