@@ -14,15 +14,17 @@ public actor Subtraction: ComputeKernel {
     private let valueBuf : MTLBuffer;
     private let valueLength : UInt32;
     private let floatToSubtract : Float;
+    private let powVal: Float;
     private let result : MTLBuffer;
     
     private let observerStore : ObserverStore = ObserverStore();
     
-   public init(valuesArr: MTLBuffer, numOfValues: UInt32, valueToSubtract: Float, resultBuf: MTLBuffer) async {
-        self.valueBuf = valuesArr
-        self.valueLength = numOfValues
-        self.floatToSubtract = valueToSubtract
-        self.result = resultBuf
+    public init(valuesArr: MTLBuffer, numOfValues: UInt32, valueToSubtract: Float, powerVal: Float, resultBuf: MTLBuffer) async {
+        self.valueBuf = valuesArr;
+        self.valueLength = numOfValues;
+        self.floatToSubtract = valueToSubtract;
+        self.result = resultBuf;
+        self.powVal = powerVal;
     }
     
     nonisolated public static func getFunctionName() -> String {
@@ -34,13 +36,13 @@ public actor Subtraction: ComputeKernel {
         var length : UInt32 = self.valueLength;
         var sub : Float = self.floatToSubtract;
         let result : MTLBuffer = await self.result;
-        var onePw : Float = 1.0;
+        var pwVal : Float = self.powVal;
         return { encoder, pipelineState in
             // Setup values
             encoder.setBuffer(values, offset: 0, index: 0);
             encoder.setBytes(&length, length: MemoryLayout<UInt32>.stride, index: 1);
             encoder.setBytes(&sub, length: MemoryLayout<Float>.stride, index: 2);
-            encoder.setBytes(&onePw, length: MemoryLayout<Float>.stride, index: 3);
+            encoder.setBytes(&pwVal, length: MemoryLayout<Float>.stride, index: 3);
             encoder.setBuffer(result, offset: 0, index: 4);
             
             // Setup thread dispatch
@@ -57,7 +59,7 @@ public actor Subtraction: ComputeKernel {
     }
     
     /// Observe for a [Float] value
-    public func addObserver<O>(_ observer: O) async where O : ResultObserver {
+    public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
     
@@ -74,6 +76,7 @@ public actor Subtraction: ComputeKernel {
 class SubtractionFactory: ComputeKernelCreatable {
     
     private var value: Float = 1.0;
+    private var powVal : Float = 1.0;
     
     static func getFactoryName() -> String {
         return Subtraction.getFunctionName();
@@ -83,6 +86,11 @@ class SubtractionFactory: ComputeKernelCreatable {
     /// Call this function before createKernel()
     func setSubtractionValue(value: Float) {
         self.value = value;
+    }
+    
+    /// Sets the power value used after the subtraction the resulting ComputeKernel will use on all elements within the values of MTLBuffer
+    func setPowValue(value: Float) {
+        self.powVal = value;
     }
     
     func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
@@ -99,7 +107,7 @@ class SubtractionFactory: ComputeKernelCreatable {
         guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.size, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        return await Subtraction(valuesArr: valuesToSub, numOfValues: numOfValues, valueToSubtract: self.value, resultBuf: resultAlloc)
+        return await Subtraction(valuesArr: valuesToSub, numOfValues: numOfValues, valueToSubtract: self.value, powerVal: self.powVal, resultBuf: resultAlloc)
     }
 }
 
