@@ -7,7 +7,27 @@
 
 import Metal
 
-class MeanValue: ComputeKernel {
+actor MeanValue: ComputeKernel {
+    private var observers : [(Any) async -> ()] = []; // Store update functions instead to allow for passing of any type value (the type will be checked within the function)
+    
+    /// Observe for a Float type
+    func addObserver<O: ResultObserver>(_ observer: O) async {
+        let updateFunc : @Sendable (Any) async -> () = { value in
+            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
+            await observer.update(with: typedValue);
+        }
+        self.observers.append(updateFunc);
+    }
+    
+    func notifyObservers() async {
+        // Get result
+        let rawPtr : UnsafeMutableRawPointer = self.sumResult.contents();
+        let typedPointer : UnsafeMutablePointer<Float> = rawPtr.bindMemory(to: Float.self, capacity: 1); // Single float value, multiplied by stride automatically
+        let result : Float = typedPointer.pointee / Float(self.maxLength); // Want to return mean, kernel computed sum thus divide by number of elements
+        for observerFunc in self.observers {
+            Task {await observerFunc(result);}
+        }
+    }
     
     private nonisolated static let name : String = "calculateArraySum";
     
@@ -15,7 +35,7 @@ class MeanValue: ComputeKernel {
     private var maxLength: UInt32;
     private var sumResult: MTLBuffer;
     
-    init(arrayToSum: MTLBuffer, numOfElements: UInt32, resultBuf: MTLBuffer) {
+    init(arrayToSum: MTLBuffer, numOfElements: UInt32, resultBuf: MTLBuffer) async {
         self.values = arrayToSum;
         self.maxLength = numOfElements;
         self.sumResult = resultBuf;
@@ -23,19 +43,24 @@ class MeanValue: ComputeKernel {
 
     nonisolated static func getFunctionName() -> String {return Self.name;}
     
-    func encode() -> (any MTLComputeCommandEncoder, any MTLComputePipelineState) throws -> () {
+    nonisolated func encode() async -> (any MTLComputeCommandEncoder, any MTLComputePipelineState) -> () {
+        // Get copies of variables, may possibly be done on another thread in which the encoder is not sendable, thus don't want to make it possible for another thread to run with the encoder
+        var len : UInt32 = await self.maxLength;
+        let values : MTLBuffer = await self.values;
+        let result : MTLBuffer = await self.sumResult;
+            
         return ({ (encoder, pipelineState) in
             // Setup memory
-            encoder.setBytes(&self.maxLength, length: MemoryLayout.size(ofValue: self.maxLength), index: 1);
-            encoder.setBuffer(self.values, offset: 0, index: 0);
-            encoder.setBuffer(self.sumResult, offset: 0, index: 2);
+            encoder.setBytes(&len, length: MemoryLayout<UInt32>.stride, index: 1);
+            encoder.setBuffer(values, offset: 0, index: 0);
+            encoder.setBuffer(result, offset: 0, index: 2);
             // Thread group requires the length of bytes be specified (the object isin't created on the CPU)
             // Specified for threadgroup(0) -- want one float per thread in a thread group of maximum thread size for the given device
-            encoder.setThreadgroupMemoryLength(MemoryLayout.size(ofValue: Float.self)*pipelineState.maxTotalThreadsPerThreadgroup, index: 0);
+            encoder.setThreadgroupMemoryLength(MemoryLayout<Float>.stride*pipelineState.maxTotalThreadsPerThreadgroup, index: 0);
             
             // Setup thread dispatch
             // Determine the total 1D grid size
-            let totalThreads = Int(self.maxLength);
+            let totalThreads = Int(len);
             let gridExecutionSize = MTLSize(width: totalThreads, height: 1, depth: 1);
 
             // Query the pipeline state to discover the absolute maximum allocation permitted by the GPU hardware
@@ -69,7 +94,7 @@ class MeanValueFactory: ComputeKernelCreatable {
         guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.size, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        return MeanValue(arrayToSum: valuesToSumBuf, numOfElements: numOfValues, resultBuf: resultAlloc);
+        return await MeanValue(arrayToSum: valuesToSumBuf, numOfElements: numOfValues, resultBuf: resultAlloc);
     }
     
     

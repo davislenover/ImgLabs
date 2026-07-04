@@ -10,8 +10,30 @@ import Metal
 
 /// A class which defines to other classes a kernel on how to convert an image of type ImageData to a 1D array of values representing the grayscale image
 /// Is thread-safe, after init no values change
-class GrayScaleConvert : ComputeKernel, Sendable {
+actor GrayScaleConvert : ComputeKernel, Sendable {
     
+    private var observers : [(Any) async -> ()] = []; // Store update functions instead to allow for passing of any type value (the type will be checked within the function)
+    
+    /// Observe for a [Float] type
+    func addObserver<O: ResultObserver>(_ observer: O) async {
+        let updateFunc : @Sendable (Any) async -> () = { value in
+            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
+            await observer.update(with: typedValue);
+        }
+        self.observers.append(updateFunc);
+    }
+    
+    func notifyObservers() async {
+        // Get result
+        let rawPtr : UnsafeMutableRawPointer = self.grayScaleBuf.contents();
+        let length : Int = self.grayScaleBuf.length / MemoryLayout<Float>.stride;
+        let typedPointer = rawPtr.bindMemory(to: Float.self, capacity: length);
+        let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: length));
+        for observerFunc in self.observers {
+            Task {await observerFunc(result);}
+        }
+    }    
+
     private nonisolated static let name : String = "convertToGrayScale"; // Matches the Metal definition
     
     private let rgbaBuf : MTLBuffer; // UChar array holding RGBA values, single photo
@@ -28,7 +50,7 @@ class GrayScaleConvert : ComputeKernel, Sendable {
     ///     - rgbBufArr: Contains a 1D array of values on a Metal buffer representing the premultiplied RGBA values of the pixels
     ///     - resultBufArr: The resulting buffer -- i.e., stores the result of the RGBA pixels to grayscale values (one element per pixel)
     ///     - pixelCount: The number of RGBA values
-    init(rgbBufArr : MTLBuffer, resultBufArr : MTLBuffer, pixelCount: UInt32) {
+    init(rgbBufArr : MTLBuffer, resultBufArr : MTLBuffer, pixelCount: UInt32) async {
         self.rgbaBuf = rgbBufArr;
         self.grayScaleBuf = resultBufArr;
         self.numOfPixels = pixelCount;
@@ -38,22 +60,25 @@ class GrayScaleConvert : ComputeKernel, Sendable {
     
     /// Sets up conversion to grayscale kernel. Encodes internal weights, a black background color and the ingested image raw pixel values along with the out result
     /// One thread per pixel, will dispatch the maximum width allowed per thread group
-    func encode() -> (any MTLComputeCommandEncoder, any MTLComputePipelineState) throws -> () {
+    nonisolated func encode() async -> (any MTLComputeCommandEncoder, any MTLComputePipelineState)-> () {
+        let rgbaInput : MTLBuffer = await self.rgbaBuf;
+        let grayScaleOutput : MTLBuffer = await self.grayScaleBuf;
+        var rgbWeights : SIMD4<Float> = await Self.rgbWeights;
+        var bkgColor : SIMD4<Float> = await Self.backgroundColor;
+        var numOfPixels : UInt32 = await self.numOfPixels;
+        
         return ({ (encoder, pipelineState) in
             // Setup memory
-            var rgbWeights : SIMD4<Float> = Self.rgbWeights;
-            var bkgColor : SIMD4<Float> = Self.backgroundColor;
-            var numOfPixels : UInt32 = self.numOfPixels;
             // setBytes copies small memory directly to the encoded command (i.e., it's inlined thus being fast)
-            encoder.setBytes(&rgbWeights, length: MemoryLayout.size(ofValue: rgbWeights), index: 2);
-            encoder.setBytes(&bkgColor, length: MemoryLayout.size(ofValue: bkgColor), index: 1);
-            encoder.setBytes(&numOfPixels, length: MemoryLayout.size(ofValue: numOfPixels), index: 4);
-            encoder.setBuffer(self.rgbaBuf, offset: 0, index: 0);
-            encoder.setBuffer(self.grayScaleBuf, offset: 0, index: 3);
+            encoder.setBytes(&rgbWeights, length: MemoryLayout<SIMD4<Float>>.stride, index: 2);
+            encoder.setBytes(&bkgColor, length: MemoryLayout<SIMD4<Float>>.stride, index: 1);
+            encoder.setBytes(&numOfPixels, length: MemoryLayout<UInt32>.stride, index: 4);
+            encoder.setBuffer(rgbaInput, offset: 0, index: 0);
+            encoder.setBuffer(grayScaleOutput, offset: 0, index: 3);
             
             // Setup thread dispatch
             // Determine the total 1D grid size (total number of pixel threads to run)
-            let totalPixelThreads = Int(self.numOfPixels);
+            let totalPixelThreads = Int(numOfPixels);
             let gridExecutionSize = MTLSize(width: totalPixelThreads, height: 1, depth: 1);
 
             // Query the pipeline state to discover the absolute maximum allocation permitted by the GPU hardware
@@ -72,7 +97,7 @@ class GrayScaleConvert : ComputeKernel, Sendable {
 class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
     static func getFactoryName() -> String {return GrayScaleConvert.getFunctionName();}
     
-    func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> ComputeKernel {
+    func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
         // Get raw pixel values, convert to MTLBuffer (put in shared memory)
         let devToAlloc : MTLDevice = context.getDevice();
         guard let rgbBuf : MTLBuffer = try? await bufable.toMTLBuffer(devToAlloc) else {
@@ -87,7 +112,7 @@ class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
         guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        return GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
+        return await GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
     }
 }
 

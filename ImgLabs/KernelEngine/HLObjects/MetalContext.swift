@@ -33,7 +33,7 @@ public actor MetalComputeContext {
     
     /// Gets the compute pipeline state object for a given function
     /// - Parameters: functionName
-    public func getPipelineState(for computeObject: ComputeKernel) async throws -> MTLComputePipelineState {
+    public func getPipelineState(for computeObject: any ComputeKernel) async throws -> MTLComputePipelineState {
         let functionName = type(of: computeObject).getFunctionName(); // static function call
         
         // If a task already exists (either running or finished), await it directly

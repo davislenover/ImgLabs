@@ -7,14 +7,24 @@
 
 ' Note that allocating device memory is NOT handled by Computekernels rather, buffers will be passed to them by their corresponding factory classes (then the ComputeKernels can figure out where it goes in the function call)
 
+interface ObservableResult <<protocol>> {
+    + {abstract} addObserver<O: ResultObserver>(_ observer: O) : Void <<async>>
+    + {abstract} notifyObservers() : Void <<async>>
+}
+
+interface ResultObserver<Result> <<protocol>> {
+    + {abstract} update(with: Result) : Void <<async>>
+}
+
 interface ComputeKernel <<protocol>> {
     + {static} {abstract} getFunctionName() : String
     + {abstract} encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
 }
 
-note top of ComputeKernel
+note bottom of ComputeKernel
     Defines a class which knows how to encode a kernel shader given buffers and dispatch threads
     Has a corresponding factory class (ComputeKernelCreatable) which instanciates the class
+    Is an ObservableResult which ResultObservers can subscribe to, to get the resulting value after running on device
 end note
 
 interface ComputeKernelCreatable <<protocol>> {
@@ -42,7 +52,7 @@ class MetalComputeContext <<actor>> {
 }
 
 class MetalRunner <<actor>> {
-        + {static} runCompute(from context : MetalComputeContext, for kernels : [ComputeKernel], callback cb : @escaping @Sendable (MTLCommandBuffer) -> ()) <<async>> <<throws>>
+        + {static} runCompute(from context : MetalComputeContext, for kernels : [ComputeKernel]) : Void <<async>> <<throws>>
 }
 
 class ImageData <<Identifiable, MTBufable>> {
@@ -61,9 +71,11 @@ class GrayScaleKernelFactory <<ComputeKernelCreatable, Sendable>> {
 ComputeKernelCreatable .l.> ComputeKernel
 ComputeKernelCreatable .r.> MTBufable
 ComputeKernelCreatable .u.> MetalComputeContext
+ComputeKernel .u.|> ObservableResult
 GrayScaleConvert .u.|> ComputeKernel
 GrayScaleKernelFactory .u.|> ComputeKernelCreatable
 ImageData .u.|> MTBufable
 MetalRunner .l.> MetalComputeContext
+ObservableResult .l.> ResultObserver
 
 @enduml

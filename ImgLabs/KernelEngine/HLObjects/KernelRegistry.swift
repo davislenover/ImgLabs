@@ -12,7 +12,7 @@ internal final actor KernelRegistry {
         self.kernels[type(of:kernelFactory).getFactoryName()] = kernelFactory;
     }
     
-    public func getKernel(name: String) async throws -> (MTBufable,MetalComputeContext) async throws -> ComputeKernel {
+    public func getKernel(name: String) async throws -> (MTBufable,MetalComputeContext) async throws -> any ComputeKernel {
         guard let kernel = self.kernels[name] else {
             throw KernelEngineError.failedToFindKernelCreateFunction(name: name);
         }
@@ -26,5 +26,5 @@ public protocol ComputeKernelCreatable {
     /// - Parameters:
     ///     - buf: An object which conforms to the MTBufable protocol (i.e., to allow the ComputeKernel to gather the data it needs to pass to the device)
     ///     - context: An context object which houses information about the device being used (to point the ComputeKernel instance as to where to allocate memory/dispatch threads)
-    func createKernel(bufable: MTBufable, context: MetalComputeContext) async throws -> ComputeKernel;
+    func createKernel(bufable: MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel;
 }

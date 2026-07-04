@@ -99,8 +99,10 @@ struct ContentView: View { // This a custom view, it conatains a body
                                         let factoryGrayScale = GrayScaleKernelFactory();
                                         let computeContext : MetalComputeContext = MetalComputeContext()!;
                                         await computeContext.registerKernel(factory: factoryGrayScale);
-                                        async let grayScaleTest : ComputeKernel = computeContext.getKernel(typ: factoryGrayScale, buf: item);
-                                        try await MetalRunner.runCompute(from: computeContext, for: [grayScaleTest], callback: {_ in print("Done!")});
+                                        async let grayScaleTest : any ComputeKernel = computeContext.getKernel(typ: factoryGrayScale, buf: item);
+                                        let test : any ResultObserver<[Float]> = DummyClass();
+                                        try await grayScaleTest.addObserver(test);
+                                        try await MetalRunner.runCompute(from: computeContext, for: [grayScaleTest]);
                                     }
                                 }
                         }
@@ -113,6 +115,15 @@ struct ContentView: View { // This a custom view, it conatains a body
 
 #Preview {
     ContentView()
+}
+
+class DummyClass : ResultObserver<[Float]> {
+    func update(with: [Float]) {
+        print("The first values are...");
+        for i in 0...2 {
+            print(with[i]);
+        }
+    }
 }
 
 // @state tells SwiftUI to watch the value for any changes, if so body will be called again
