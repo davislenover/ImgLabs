@@ -28,7 +28,7 @@ class GrayScaleConvert : ComputeKernel, Sendable {
     ///     - rgbBufArr: Contains a 1D array of values on a Metal buffer representing the premultiplied RGBA values of the pixels
     ///     - resultBufArr: The resulting buffer -- i.e., stores the result of the RGBA pixels to grayscale values (one element per pixel)
     ///     - pixelCount: The number of RGBA values
-    init(rgbBufArr : MTLBuffer, resultBufArr : MTLBuffer, pixelCount: UInt32) throws {
+    init(rgbBufArr : MTLBuffer, resultBufArr : MTLBuffer, pixelCount: UInt32) {
         self.rgbaBuf = rgbBufArr;
         self.grayScaleBuf = resultBufArr;
         self.numOfPixels = pixelCount;
@@ -87,7 +87,7 @@ class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
         guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        return try GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
+        return GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
     }
 }
 
