@@ -34,7 +34,8 @@ public actor ObserverStore {
     
     public func add<O: ResultObserver>(_ observer: O) {
         let updateFunc : @Sendable (Any) async -> () = { value in
-            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
+            guard let typedValue = value as? O.Result else {print(O.Result.self, value.self);return;} // Result is known at compile time
+            print("Will update!");
             await observer.update(with: typedValue);
         }
         funcs.append(updateFunc);

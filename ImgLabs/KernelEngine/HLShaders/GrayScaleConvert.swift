@@ -103,7 +103,7 @@ class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
         }
         // Note that length argument is specified in bytes, the metal argument is float which one float is 4 bytes (i.e., each resulting pixel grayscale value is 4 bytes)
         // Thus, multiply number of pixels by the size of a Float
-        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.size, options: [.storageModeShared]) else {
+        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
         return await GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);

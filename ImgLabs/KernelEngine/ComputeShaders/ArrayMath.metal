@@ -5,6 +5,7 @@
 //  Created by Davis Lenover on 2026-03-05.
 //
 #include <metal_stdlib>
+#include <metal_logging>
 constant float ZERO_CHECK_VAL = 0.000001f;
 
 // Metal requires that kernel input arguments must have their locations specified (so the GPU doesn't need to waste time finding them in memory)
@@ -23,7 +24,7 @@ kernel void multiply(device uchar* data [[buffer(0)]], constant uchar* multiplie
  */
 kernel void calculateArraySum(
     device const float* values          [[buffer(0)]],
-    device uint32_t* maxLength       [[buffer(1)]],
+    constant uint32_t& maxLength       [[buffer(1)]],
     device metal::atomic_float* globalSum [[buffer(2)]],
     threadgroup float* localSharedMem  [[threadgroup(0)]], // Shared memory allocation per thread group
     uint32_t threadId                  [[thread_position_in_grid]],
@@ -32,7 +33,7 @@ kernel void calculateArraySum(
 {
     // Load data from slow global memory into fast local shared memory
     // If the thread is out of bounds, load 0.0 so it doesn't affect the sum
-    localSharedMem[localId] = (threadId < *maxLength) ? values[threadId] : 0.0f;
+    localSharedMem[localId] = (threadId < maxLength) ? values[threadId] : 0.0f;
     
     // Synchronize to ensure all threads in this group finished writing to shared memory
     threadgroup_barrier(metal::mem_flags::mem_threadgroup);
@@ -74,7 +75,7 @@ kernel void calculateSubtractionPow(
         if (metal::abs(remainder - 1.0f) < ZERO_CHECK_VAL) {
             result *= metal::sign(curVal);
         }
-        values[threadId] = result;
+        resultArr[threadId] = result;
     }
 }
 

@@ -88,7 +88,7 @@ class MeanValueFactory: ComputeKernelCreatable {
             fatalError("Failed to get number of values");
         }
         // resultAlloc will be wrapped in a metal atomic float in the kernel
-        guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.size, options: [.storageModeShared]) else {
+        guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
         return await MeanValue(arrayToSum: valuesToSumBuf, numOfElements: numOfValues, resultBuf: resultAlloc);

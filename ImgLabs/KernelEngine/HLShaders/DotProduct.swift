@@ -22,7 +22,7 @@ public actor DotProduct: ComputeKernel {
         await self.observerStore.callAll(with: result);
     }
     
-    private nonisolated static let name : String = "doArr";
+    private nonisolated static let name : String = "dotArr";
     
     private var arr1 : MTLBuffer;
     private var arr2 : MTLBuffer;
@@ -97,7 +97,7 @@ class DotProductFactory: ComputeKernelCreatable {
             fatalError("Failed to get number of values");
         }
         // resultAlloc will be wrapped in a metal atomic float in the kernel
-        guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.size, options: [.storageModeShared]) else {
+        guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
         return await DotProduct(inputArr1: arr1Buf, inputArr2: arr2Buf, numOfArrElements: numOfValues, resultBuf: resultAlloc);

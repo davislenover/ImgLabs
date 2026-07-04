@@ -49,9 +49,7 @@ public actor MetalRunner {
         }
         // Continue here once GPU work is complete
         for kernel in kernels {
-            Task {
-                await kernel.notifyObservers(); // Notify all observers of all kernels that the GPU finished and the results are ready
-            }
+            await kernel.notifyObservers(); // Notify all observers of all kernels that the GPU finished and the results are ready
         }
     }
 }

@@ -103,8 +103,8 @@ class SubtractionFactory: ComputeKernelCreatable {
         guard let numOfValues : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of values");
         }
-        // resultAlloc will be wrapped in a metal atomic float in the kernel
-        guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.size, options: [.storageModeShared]) else {
+        // One result is written per element, thus allocate one Float per value
+        guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfValues) * MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
         return await Subtraction(valuesArr: valuesToSub, numOfValues: numOfValues, valueToSubtract: self.value, powerVal: self.powVal, resultBuf: resultAlloc)
