@@ -26,3 +26,24 @@ public protocol ResultObserver<Result> {
     func update(with: Result) async;
 }
 
+
+/// A thread-safe class which stores and calls observers update functions
+/// Useful as an Observer store for ObservableResult objects
+public actor ObserverStore {
+    private var funcs : [(Any) async -> ()] = []; // Store update functions instead to allow for passing of any type value (the type will be checked within the function)
+    
+    public func add<O: ResultObserver>(_ observer: O) {
+        let updateFunc : @Sendable (Any) async -> () = { value in
+            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
+            await observer.update(with: typedValue);
+        }
+        funcs.append(updateFunc);
+    }
+    
+    public func callAll(with: Any) async {
+        for f in funcs {
+            await f(with);
+        }
+    }
+}
+

@@ -12,15 +12,11 @@ import Metal
 /// Is thread-safe, after init no values change
 actor GrayScaleConvert : ComputeKernel, Sendable {
     
-    private var observers : [(Any) async -> ()] = []; // Store update functions instead to allow for passing of any type value (the type will be checked within the function)
+    private let observerStore : ObserverStore = ObserverStore();
     
     /// Observe for a [Float] type
     func addObserver<O: ResultObserver>(_ observer: O) async {
-        let updateFunc : @Sendable (Any) async -> () = { value in
-            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
-            await observer.update(with: typedValue);
-        }
-        self.observers.append(updateFunc);
+        await self.observerStore.add(observer);
     }
     
     func notifyObservers() async {
@@ -29,10 +25,8 @@ actor GrayScaleConvert : ComputeKernel, Sendable {
         let length : Int = self.grayScaleBuf.length / MemoryLayout<Float>.stride;
         let typedPointer = rawPtr.bindMemory(to: Float.self, capacity: length);
         let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: length));
-        for observerFunc in self.observers {
-            Task {await observerFunc(result);}
-        }
-    }    
+        await self.observerStore.callAll(with: result);
+    }
 
     private nonisolated static let name : String = "convertToGrayScale"; // Matches the Metal definition
     

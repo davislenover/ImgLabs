@@ -8,15 +8,14 @@
 import Metal
 
 actor MeanValue: ComputeKernel {
+    
+    private let observerStore : ObserverStore = ObserverStore();
+    
     private var observers : [(Any) async -> ()] = []; // Store update functions instead to allow for passing of any type value (the type will be checked within the function)
     
     /// Observe for a Float type
     func addObserver<O: ResultObserver>(_ observer: O) async {
-        let updateFunc : @Sendable (Any) async -> () = { value in
-            guard let typedValue = value as? O.Result else {return;} // Result is known at compile time
-            await observer.update(with: typedValue);
-        }
-        self.observers.append(updateFunc);
+        await self.observerStore.add(observer);
     }
     
     func notifyObservers() async {
@@ -24,9 +23,7 @@ actor MeanValue: ComputeKernel {
         let rawPtr : UnsafeMutableRawPointer = self.sumResult.contents();
         let typedPointer : UnsafeMutablePointer<Float> = rawPtr.bindMemory(to: Float.self, capacity: 1); // Single float value, multiplied by stride automatically
         let result : Float = typedPointer.pointee / Float(self.maxLength); // Want to return mean, kernel computed sum thus divide by number of elements
-        for observerFunc in self.observers {
-            Task {await observerFunc(result);}
-        }
+        await self.observerStore.callAll(with: result);
     }
     
     private nonisolated static let name : String = "calculateArraySum";
@@ -96,7 +93,5 @@ class MeanValueFactory: ComputeKernelCreatable {
         }
         return await MeanValue(arrayToSum: valuesToSumBuf, numOfElements: numOfValues, resultBuf: resultAlloc);
     }
-    
-    
 }
 
