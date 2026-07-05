@@ -191,44 +191,53 @@ class ImageModel {
         // Open the native Finder sheet
         openPanel.begin { response in
             if response == .OK {
-                let totalImageCount : Int = openPanel.urls.count;
-                if (totalImageCount > 0) {
-                    Task {
-                        await MainActor.run {
-                            status.setPhase(to: .importing);
-                            status.setProgress(PROGRESS_START);
-                            status.setStatusMessage("Importing images...");
-                        }
-                    }
-                } else {
+                let selectedURLs = openPanel.urls;
+                let selectedCount = selectedURLs.count;
+                // How many images were already imported before this run
+                let previousCount = self.imageList.count;
+                if (selectedCount == 0) {
                     status.setPhase(to: .idle);
                     status.setStatusMessage("Idle...");
                     return;
                 }
-                // Clear pre-existing images
-                if (self.imageList.count > 0) {
-                    self.imageList.removeAll();
-                }
-                for selectedURL in openPanel.urls { // Multiple images
-                    if let nsImage = NSImage(contentsOf: selectedURL),
-                       let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                        let newImage = ImageData(img: cgImage);
-                        Task {
-                            await MainActor.run {
+                Task {
+                    await MainActor.run {
+                        status.setPhase(to: .importing);
+                        status.setProgress(PROGRESS_START);
+                        status.setStatusMessage("Importing images...");
+                    }
+                    var importedCount = 0; // How many were successfully decoded & added this run
+                    for (index, selectedURL) in selectedURLs.enumerated() {
+                        // Decode off the main thread (this Task isn't main-isolated)
+                        var decoded : ImageData? = nil;
+                        if let nsImage = NSImage(contentsOf: selectedURL),
+                           let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                            decoded = ImageData(img: cgImage);
+                        }
+                        let processed = index + 1;
+                        await MainActor.run {
+                            if let decoded {
                                 // Animate the append so the "Clear Imports" button's
                                 // transition plays when the first image arrives
                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                                    self.imageList.append(newImage);
+                                    self.imageList.append(decoded);
                                 }
-                                if (self.imageList.count == totalImageCount) {
-                                    status.setPhase(to: .finished);
-                                    status.setProgress(PROGRESS_END);
-                                    status.setStatusMessage("Importing complete, \(self.imageList.count) images imported");
-                                } else {
-                                    status.setProgress(Double(self.imageList.count) / Double(totalImageCount));
-                                    status.setStatusMessage(self.imageList.count == 1 ? "Importing image 1 of \(totalImageCount)" : "Importing image \(self.imageList.count) of \(totalImageCount)");
-                                }
+                                importedCount += 1;
                             }
+                            status.setProgress(Double(processed) / Double(selectedCount));
+                            status.setStatusMessage("Importing image \(processed) of \(selectedCount)");
+                        }
+                    }
+                    await MainActor.run {
+                        let totalCount = self.imageList.count;
+                        let noun = importedCount == 1 ? "image" : "images";
+                        status.setPhase(to: .finished);
+                        status.setProgress(PROGRESS_END);
+                        if previousCount > 0 {
+                            // Appended to an existing set - report the delta and the running total
+                            status.setStatusMessage("Imported \(importedCount) more \(noun), \(totalCount) total");
+                        } else {
+                            status.setStatusMessage("Importing complete, \(importedCount) \(noun) imported");
                         }
                     }
                 }
@@ -270,16 +279,28 @@ struct ControlSideBar : View {
     // would be recreated every render, losing imported images and status)
     @State private var model: ImageModel = ImageModel();
     @State private var status : AppStatusModel = AppStatusModel();
+    // Drives the confirmation alert shown when importing over existing images
+    @State private var showImportConfirm : Bool = false;
+
+    /// Opens the Finder panel to import images (wrapped so both the button and alert can call it)
+    private func startImport() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear button
+            model.browseForImages(status);
+        }
+    }
+
     var body: some View {
         VStack {
             Text("ImgLabs")
                 .font(.system(size: 40, weight: .black))
             HStack {
                 Button(action: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear button
-                        model.browseForImages(status);
+                    // If images already exist, confirm first; otherwise import straight away
+                    if model.containsImages() {
+                        showImportConfirm = true;
+                    } else {
+                        startImport();
                     }
-                    // withAnimation tells swift to interpolate the entire view between two states
                 }) {
                     // How the button looks
                     Text("Import Photos")
@@ -289,7 +310,13 @@ struct ControlSideBar : View {
                         .frame(maxWidth: .infinity)
                         .cornerRadius(10)
                 }
-                .disabled(status.isBusy); // Prevent re-triggering while an operation runs
+                .disabled(status.isBusy) // Prevent re-triggering while an operation runs
+                .alert("Import more images?", isPresented: $showImportConfirm) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Import") { startImport(); }
+                } message: {
+                    Text("You already have images imported. Newly selected images will be added to your current imports.");
+                };
                 if model.containsImages() {
                     Button(action: {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
