@@ -8,26 +8,80 @@
 import SwiftUI
 import PhotosUI
 
+@Observable class ImageModel {
+    private var imageList: [ImageData] = [];
+    
+    func browseForImages() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Choose an Image"
+        openPanel.showsHiddenFiles = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+        openPanel.allowsMultipleSelection = true
+        openPanel.allowedContentTypes = [.image] // Filters for images
+
+        // Open the native Finder sheet
+        openPanel.begin { response in
+            if response == .OK {
+                for selectedURL in openPanel.urls { // Multiple images
+                    if let nsImage = NSImage(contentsOf: selectedURL),
+                       let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                        let newImage = ImageData(img: cgImage);
+                        self.imageList.append(newImage);
+                    }
+                }
+            }
+        }
+    }
+    
+    func clearImages() {
+        self.imageList.removeAll();
+    }
+    
+    func containsImages() -> Bool {
+        return !self.imageList.isEmpty;
+    }
+    
+}
 
 struct ControlSideBar : View {
-    
+    private let model: ImageModel = ImageModel();
     var body: some View {
         VStack {
             Text("ImgLabs")
                 .font(.system(size: 40, weight: .black))
-            Button(action: {
-                // TODO: add file open
-                return;
-            }) {
-                // How the button looks
-                Text("Import Photos")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .cornerRadius(10)
-            }
-            .padding(.horizontal, 40);
+            HStack {
+                Button(action: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear button
+                        model.browseForImages();
+                    }
+                    // withAnimation tells swift to interpolate the entire view between two states
+                    return;
+                }) {
+                    // How the button looks
+                    Text("Import Photos")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .cornerRadius(10)
+                };
+                if model.containsImages() {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                            model.clearImages();
+                        }
+                    }) {
+                        // How the button looks
+                        Text("Clear Imports")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .cornerRadius(10)
+                    }.transition(.move(edge: .trailing).combined(with: .opacity)); // Clear button moves in from right
+                }
+            }.padding(.horizontal, 20);
             Spacer();
         }
         .padding()
