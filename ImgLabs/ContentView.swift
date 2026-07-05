@@ -11,6 +11,19 @@ import PhotosUI
 public let PROGRESS_END : CGFloat = 1.0;
 public let PROGRESS_START : CGFloat = 0.0;
 
+@Observable
+class ZNCCModel {
+    private var znccResults : [[Float]] = [];
+    private let metalContext : MetalComputeContext? = MetalComputeContext();
+    public func getZNCC(_ imgList : [ImageData]) async throws {
+        guard let context = metalContext else {
+            return;
+        }
+        let imgCorrelation = ImageCorrelation(MetalContext: context);
+        znccResults = try await imgCorrelation.similarityMatrix(images: imgList);
+    }
+}
+
 // Holds the state for the app's status indicator
 // This is a reference type (@Observable class), NOT a View, so that mutations-
 // made from anywhere (e.g. ImageModel) are seen by the View that renders it
@@ -38,7 +51,7 @@ class AppStatusModel {
     }
 
     func setPhase(to: Phase) {
-        if to == .finished { // If finished, then want to return status to idle after sometime
+        if to == .finished || to == .error { // If finished, then want to return status to idle after sometime
             self.resetTask?.cancel();
             // Start a new async Task
             self.resetTask = Task {
@@ -272,6 +285,29 @@ class ImageModel {
         return !self.imageList.isEmpty;
     }
     
+    func runZNCC(with status: AppStatusModel, alg zncc: ZNCCModel) {
+        status.setPhase(to: .analyzing);
+        status.setStatusMessage("Checking for Image Similarity...");
+        status.setProgress(0);
+        Task {
+            do {
+                try await zncc.getZNCC(self.imageList);
+            } catch {
+                await MainActor.run {
+                    status.setProgress(PROGRESS_END);
+                    status.setPhase(to: .error);
+                    status.setStatusMessage("Similarity Check Failed!");
+                }
+                return;
+            }
+            await MainActor.run {
+                status.setProgress(PROGRESS_END);
+                status.setPhase(to: .finished);
+                status.setStatusMessage("Similarity Check Complete!");
+            }
+        }
+    }
+    
 }
 
 struct ControlSideBar : View {
@@ -279,6 +315,7 @@ struct ControlSideBar : View {
     // would be recreated every render, losing imported images and status)
     @State private var model: ImageModel = ImageModel();
     @State private var status : AppStatusModel = AppStatusModel();
+    @State private var znccObj : ZNCCModel = ZNCCModel();
     // Drives the confirmation alert shown when importing over existing images
     @State private var showImportConfirm : Bool = false;
 
@@ -325,6 +362,22 @@ struct ControlSideBar : View {
                     }) {
                         // How the button looks
                         Text("Clear Imports")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .cornerRadius(10)
+                    }
+                    .disabled(status.isBusy) // Prevent re-triggering while an operation runs
+                    .transition(.move(edge: .trailing).combined(with: .opacity)); // Clear button moves in from right
+                    // Analyze button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                            model.runZNCC(with: status, alg: znccObj);
+                        }
+                    }) {
+                        // How the button looks
+                        Text("Analyze")
                             .font(.headline)
                             .foregroundColor(.white)
                             .padding()
