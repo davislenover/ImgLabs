@@ -74,11 +74,15 @@ public actor DotProduct: ComputeKernel {
 class DotProductFactory: ComputeKernelCreatable {
     private var arr2Bufable : (any MTBufable)?;
 
-    // Caches the GPU buffer for each source array so an array reused across many pairs (as in an
+    // Shared cache of already-uploaded operand buffers, so an array reused across many pairs (as in an
     // all-pairs similarity matrix) is only uploaded to the device once instead of per kernel
-    // Keyed by reference identity, so this only reuses buffers for class-based MTBufable conformers
-    // Assumes a bufable's contents are stable while it is cached; call clearBufferCache() if they change
-    private var bufferCache : [ObjectIdentifier: MTLBuffer] = [:];
+    private let bufferCache : BufferCache;
+
+    /// - Parameter bufferCache: The cache used to reuse operand buffers. Pass a shared instance to reuse
+    ///   buffers across factories; the default gives this factory its own private cache.
+    init(bufferCache: BufferCache = BufferCache()) {
+        self.bufferCache = bufferCache;
+    }
 
     static func getFactoryName() -> String {
         return DotProduct.getFunctionName();
@@ -86,23 +90,6 @@ class DotProductFactory: ComputeKernelCreatable {
 
     public func setArr2(bufable: any MTBufable) {
         self.arr2Bufable = bufable;
-    }
-
-    /// Drops all cached operand buffers, releasing the GPU memory they hold
-    public func clearBufferCache() {
-        self.bufferCache.removeAll();
-    }
-
-    /// Returns the MTLBuffer for a bufable, reusing a previously created one when the same object
-    /// has already been converted (avoids re-uploading arrays that are shared across many kernels)
-    private func cachedBuffer(for bufable: any MTBufable, device: MTLDevice) async throws -> MTLBuffer {
-        let key = ObjectIdentifier(bufable as AnyObject);
-        if let existing = self.bufferCache[key] {
-            return existing;
-        }
-        let buffer = try await bufable.toMTLBuffer(device);
-        self.bufferCache[key] = buffer;
-        return buffer;
     }
 
     func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
@@ -114,8 +101,8 @@ class DotProductFactory: ComputeKernelCreatable {
         }
 
         // Reuse previously uploaded operand buffers where possible; both operands are read-only in the kernel
-        let arr1Buf : MTLBuffer = try await self.cachedBuffer(for: bufable, device: devToAlloc);
-        let arr2Buf : MTLBuffer = try await self.cachedBuffer(for: arr2Bufable, device: devToAlloc);
+        let arr1Buf : MTLBuffer = try await self.bufferCache.buffer(for: bufable, device: devToAlloc);
+        let arr2Buf : MTLBuffer = try await self.bufferCache.buffer(for: arr2Bufable, device: devToAlloc);
 
         guard let numOfValues : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of values");

@@ -68,12 +68,27 @@ class GrayScaleConvert <<ComputeKernel, Sendable>> {
 class GrayScaleKernelFactory <<ComputeKernelCreatable, Sendable>> {
 }
 
+class DotProductFactory <<ComputeKernelCreatable, Sendable>> {
+}
+
+class BufferCache <<actor>> {
+    - cache : [ObjectIdentifier: Task<MTLBuffer, Error>];
+    + buffer(for bufable: any MTBufable, device: MTLDevice) : MTLBuffer <<async>> <<throws>>
+}
+
+note left of BufferCache {
+    Used to store created MTLBuffers that are already in GPU memory which other objects may re-use
+    Reduces memory usage
+}
+
 ComputeKernelCreatable .l.> ComputeKernel
 ComputeKernelCreatable .r.> MTBufable
 ComputeKernelCreatable .u.> MetalComputeContext
 ComputeKernel .u.|> ObservableResult
 GrayScaleConvert .u.|> ComputeKernel
 GrayScaleKernelFactory .u.|> ComputeKernelCreatable
+DotProductFactory .u.|> ComputeKernelCreatable
+DotProductFactory ..> BufferCache
 ImageData .u.|> MTBufable
 MetalRunner .l.> MetalComputeContext
 ObservableResult .l.> ResultObserver

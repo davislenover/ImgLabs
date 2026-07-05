@@ -116,8 +116,12 @@ class ImageCorrelation {
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleKernels); // Will suspend here until completion
         
+        // Each grayscale array is fed to the mean factory and BOTH subtraction factories, so share one
+        // cache across them: every grayscale array is uploaded to the GPU once instead of three times
+        let statsCache : BufferCache = BufferCache();
+
         // Find the mean in all grayscale images
-        let factoryMean : MeanValueFactory = MeanValueFactory();
+        let factoryMean : MeanValueFactory = MeanValueFactory(bufferCache: statsCache);
         var grayScaleMeanKernels : [ComputeKernel] = [];
         var grayScaleImageMeans : [FloatValueResult] = [];
         for grayScaleImage in grayScaleImages {
@@ -130,8 +134,8 @@ class ImageCorrelation {
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleMeanKernels);
         
         // Next find the subtraction of the grayscale values from the mean and also do the same but every result to the power of two
-        let factorySubtractionOne = SubtractionFactory();
-        let factorySubtractionSqr = SubtractionFactory();
+        let factorySubtractionOne = SubtractionFactory(bufferCache: statsCache);
+        let factorySubtractionSqr = SubtractionFactory(bufferCache: statsCache);
         factorySubtractionSqr.setPowValue(value:2.0);
         var grayScaleSubtractKernels : [any ComputeKernel] = [];
         var grayScaleSubtractArrays : [FloatArrayResult] = [];

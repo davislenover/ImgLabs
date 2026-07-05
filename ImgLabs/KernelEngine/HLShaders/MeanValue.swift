@@ -73,16 +73,23 @@ public actor MeanValue: ComputeKernel {
 }
 
 class MeanValueFactory: ComputeKernelCreatable {
+    // Shared cache of already-uploaded source buffers
+    private let bufferCache : BufferCache;
+
+    /// - Parameter bufferCache: Pass a shared instance to reuse buffers across factories; the default
+    ///   gives this factory its own private cache.
+    init(bufferCache: BufferCache = BufferCache()) {
+        self.bufferCache = bufferCache;
+    }
+
     static func getFactoryName() -> String {
         return MeanValue.getFunctionName();
     }
-    
+
     func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
         // Get array values, convert to MTLBuffer (put in shared memory)
         let devToAlloc : MTLDevice = context.getDevice();
-        guard let valuesToSumBuf : MTLBuffer = try? await bufable.toMTLBuffer(devToAlloc) else {
-            throw KernelEngineError.failedToAllocateMTLBufferMemory;
-        }
+        let valuesToSumBuf : MTLBuffer = try await self.bufferCache.buffer(for: bufable, device: devToAlloc);
 
         guard let numOfValues : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of values");
