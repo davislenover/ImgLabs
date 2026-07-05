@@ -8,6 +8,47 @@
 import SwiftUI
 import PhotosUI
 
+
+struct ControlSideBar : View {
+    
+    var body: some View {
+        VStack {
+            Text("ImgLabs")
+                .font(.system(size: 40, weight: .black))
+            Button(action: {
+                // TODO: add file open
+                return;
+            }) {
+                // How the button looks
+                Text("Import Photos")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .cornerRadius(10)
+            }
+            .padding(.horizontal, 40);
+            Spacer();
+        }
+        .padding()
+        .glassEffect(.regular, in: .rect(cornerRadius: 10)) // Use liquid glass material on the VStack behind the content
+        .frame(maxHeight: .infinity)
+    }
+}
+
+struct ImageGridPane : View {
+    var body : some View {
+        VStack {
+            Text("Image Grid")
+                .font(.system(size: 40, weight: .black));
+            Spacer();
+        }
+        .padding()
+        .glassEffect(.regular, in: .rect(cornerRadius: 10))
+        .frame(maxHeight: .infinity)
+    }
+}
+
 // View is the fundamental building block of SwiftUI
 // It is declarative, i.e., the expected result but supports imperative code
 struct ContentView: View { // This a custom view, it conatains a body
@@ -59,46 +100,10 @@ struct ContentView: View { // This a custom view, it conatains a body
     }
     
     var body: some View { // some means that body returns an object which conforms to the View type (i.e., don't need to specify exactly what is returned)
-        Text("ImgLabs").font(.largeTitle.bold()).padding()
-        VStack {
-            if !self.isProcessing && self.loadedImageList.isEmpty {
-                ZStack { // Z direction stack (i.e., stack items on top of eachother)
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.gray).padding(10)
-                
-                    Button("Import Image") {
-                        openMacFinder()
-                    }
-                    .shadow(color: .black.opacity(0.7), radius: 20)
-                    .shadow(color: .black.opacity(0.7), radius: 20)
-                }.transition(.slide)
-            } else if self.isProcessing {
-                ZStack { // Z direction stack (i.e., stack items on top of eachother)
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.clear).padding(10)
-                
-                    // Show progress bar with images that are loading
-                    ProgressView("Loaded \(self.loadedImageList.count) out of \(self.numberOfImages)", value: Float(self.loadedImageList.count), total: Float(self.numberOfImages)).padding(25)
-                }
-            } else {
-                // Loaded image list is not empty, display list
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(loadedImageList) { item in // Item is of type ImageData
-                            // Render the thumbnail (Convert CGImage/NSImage to SwiftUI Image)
-                            Image(nsImage: NSImage(cgImage: item.getCGImage()!, size: .zero))
-                                .resizable()
-                                .scaledToFit()
-                                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 120, maxHeight: 120)
-                                .clipped()
-                                .cornerRadius(8)
-                                .shadow(radius: 2)
-                                .onTapGesture {}
-                        }
-                    }.padding()
-                }.transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }.animation(.spring(response: 0.4, dampingFraction: 0.8), value: self.isProcessing)
+        HStack {
+            ImageGridPane()
+            ControlSideBar()
+        }.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 0, style: .continuous));
     }
 }
 
