@@ -8,22 +8,85 @@
 import SwiftUI
 import PhotosUI
 
-struct AppStatus : View {
+public let PROGRESS_END : CGFloat = 1.0;
+public let PROGRESS_START : CGFloat = 0.0;
+
+// Holds the state for the app's status indicator
+// This is a reference type (@Observable class), NOT a View, so that mutations-
+// made from anywhere (e.g. ImageModel) are seen by the View that renders it
+@Observable
+class AppStatusModel {
     enum Phase {
         case idle
         case importing
         case analyzing
+        case clearing
+        case browsing
         case finished
         case error
     }
-    @State private var curPhase : Phase = .idle;
-    @State private var statusMessage : String = "Idle...";
-    @State private var progress : Double? = nil;
-    @State private var isProgressVisible : Bool = false;
-    private let iconSize : CGFloat = 20;
+    var curPhase : Phase = .idle;
+    var statusMessage : String = "Idle...";
+    var progress : Double? = nil;
+    var isProgressVisible : Bool = false;
     // Task to reset status to idle
-    @State private var resetTask : Task<Void,Never>?; // Task returns nothing and never throws an error
-    
+    @ObservationIgnored private var resetTask : Task<Void,Never>?; // Task returns nothing and never throws an error
+
+    /// True while an operation is in progress - used to disable controls & drive the spinner
+    var isBusy : Bool {
+        return self.curPhase == .importing || self.curPhase == .analyzing || self.curPhase == .clearing || self.curPhase == .browsing;
+    }
+
+    func setPhase(to: Phase) {
+        if to == .finished { // If finished, then want to return status to idle after sometime
+            self.resetTask?.cancel();
+            // Start a new async Task
+            self.resetTask = Task {
+                do {
+                    // Sleep for 3 seconds (3,000,000,000 nanoseconds)
+                    try await Task.sleep(nanoseconds: 3 * 1_000_000_000);
+
+                    // This runs on the Main Actor automatically to safely update UI
+                    await MainActor.run {
+                        withAnimation {
+                            self.curPhase = .idle; // Reset back to idle
+                            self.isProgressVisible = false;
+                            self.progress = nil;
+                        }
+                    };
+                } catch {
+                    // The task was canceled before the 3 seconds finished (ignored)
+                }
+            }
+        } else {
+            self.resetTask?.cancel();
+        }
+        withAnimation {
+            self.curPhase = to;
+        }
+    }
+
+    func setStatusMessage(_ msg: String) {
+        withAnimation {
+            self.statusMessage = msg;
+        }
+    }
+
+    func setProgress(_ progress: Double) {
+        withAnimation {
+            if (!self.isProgressVisible) {
+                self.isProgressVisible = true;
+            }
+            self.progress = progress;
+        }
+    }
+}
+
+// Renders the status indicator described by an AppStatusModel.
+struct AppStatus : View {
+    let model : AppStatusModel;
+    private let iconSize : CGFloat = 20;
+
     /// Bouncing moon symbol - to indicate no operations are currently ongoing
     private var idleIndicator : some View {
         Image(systemName: "moon.zzz.fill")
@@ -40,7 +103,8 @@ struct AppStatus : View {
             .foregroundStyle(.indigo)
             .symbolEffect(
                 .rotate.byLayer,
-                value: true
+                options: .repeat(.continuous), // Spin smoothly & continuously (not a single discrete turn)
+                isActive: self.model.isBusy
             )
     }
     
@@ -60,64 +124,25 @@ struct AppStatus : View {
             .symbolEffect(.bounce.up.byLayer, options: .nonRepeating)
     }
     
-    public func setPhase(to: Phase) {
-        if to == .finished { // If finished, then want to return status to idle after sometime
-            self.resetTask?.cancel();
-            // Start a new async Task
-            self.resetTask = Task {
-                do {
-                    // Sleep for 3 seconds (3,000,000,000 nanoseconds)
-                    try await Task.sleep(nanoseconds: 3 * 1_000_000_000);
-                    
-                    // This runs on the Main Actor automatically to safely update UI
-                    await MainActor.run {
-                        withAnimation {
-                            self.curPhase = .idle; // Reset back to idle
-                        }
-                    };
-                } catch {
-                    // The task was canceled before the 3 seconds finished (ignored)
-                }
-            }
-        } else {
-            self.resetTask?.cancel();
-        }
-        withAnimation {
-            self.curPhase = to;
-        }
-    }
-    
-    public func setStatusMessage(_ msg: String) {
-        withAnimation {
-            self.statusMessage = msg;
-        }
-    }
-    
-    public func setProgress(_ progress: Double) {
-        withAnimation {
-            self.progress = progress;
-        }
-    }
-    
     @ViewBuilder
     public func getStatusView() -> some View {
-        if self.curPhase == .analyzing {
+        if self.model.isBusy {
             self.loadingIndicator;
-        } else if self.curPhase == .finished {
+        } else if self.model.curPhase == .finished {
             self.finishedIndicator;
-        } else if self.curPhase == .error {
+        } else if self.model.curPhase == .error {
             self.errorIndicator;
         } else {
             self.idleIndicator;
         }
     }
-    
+
     var body: some View {
         VStack {
             // Status - Icon and Text
             HStack {
                 self.getStatusView();
-                Text(self.statusMessage)
+                Text(self.model.statusMessage)
                     .font(.headline)
                     .fontWeight(.medium)
                     .foregroundStyle(.primary)
@@ -128,13 +153,22 @@ struct AppStatus : View {
                         Capsule().stroke(.white.opacity(0.2), lineWidth: 1)
                     )
             }
-            // Add progress bar below status
-            ProgressView(value: self.progress, total: 1.0)
-                .progressViewStyle(.linear) // Forces the horizontal bar layout
-                .tint(self.isProgressVisible ? .white : .gray)
-                .animation(.default, value: self.progress)
-                .scaleEffect(x: 1, y: 2, anchor: .center) // Make the bar slightly thicker
-                .padding(.horizontal, 40)
+            // Add progress bar below status.
+            // Two distinct ProgressViews so SwiftUI gives each its own identity:
+            // when progress is nil (idle / after finished), it mounts a fresh
+            // *indeterminate* bar, which reliably restarts its animation.
+            Group {
+                if let progress = self.model.progress {
+                    ProgressView(value: progress, total: PROGRESS_END) // Determinate: tracks import
+                } else {
+                    ProgressView() // Indeterminate: continuously animated resting state
+                }
+            }
+            .progressViewStyle(.linear) // Forces the horizontal bar layout
+            .tint(self.model.isProgressVisible ? .white : .gray)
+            .animation(.default, value: self.model.progress)
+            .scaleEffect(x: 1, y: 2, anchor: .center) // Make the bar slightly thicker
+            .padding(.horizontal, 40)
         }
     }
 }
@@ -143,7 +177,9 @@ struct AppStatus : View {
 class ImageModel {
     private var imageList: [ImageData] = [];
     
-    func browseForImages() {
+    func browseForImages(_ status : AppStatusModel) {
+        status.setPhase(to: .browsing);
+        status.setStatusMessage("Browsing for images...");
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose an Image"
         openPanel.showsHiddenFiles = false
@@ -155,19 +191,72 @@ class ImageModel {
         // Open the native Finder sheet
         openPanel.begin { response in
             if response == .OK {
+                let totalImageCount : Int = openPanel.urls.count;
+                if (totalImageCount > 0) {
+                    Task {
+                        await MainActor.run {
+                            status.setPhase(to: .importing);
+                            status.setProgress(PROGRESS_START);
+                            status.setStatusMessage("Importing images...");
+                        }
+                    }
+                } else {
+                    status.setPhase(to: .idle);
+                    status.setStatusMessage("Idle...");
+                    return;
+                }
+                // Clear pre-existing images
+                if (self.imageList.count > 0) {
+                    self.imageList.removeAll();
+                }
                 for selectedURL in openPanel.urls { // Multiple images
                     if let nsImage = NSImage(contentsOf: selectedURL),
                        let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                         let newImage = ImageData(img: cgImage);
-                        self.imageList.append(newImage);
+                        Task {
+                            await MainActor.run {
+                                // Animate the append so the "Clear Imports" button's
+                                // transition plays when the first image arrives
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                                    self.imageList.append(newImage);
+                                }
+                                if (self.imageList.count == totalImageCount) {
+                                    status.setPhase(to: .finished);
+                                    status.setProgress(PROGRESS_END);
+                                    status.setStatusMessage("Importing complete, \(self.imageList.count) images imported");
+                                } else {
+                                    status.setProgress(Double(self.imageList.count) / Double(totalImageCount));
+                                    status.setStatusMessage(self.imageList.count == 1 ? "Importing image 1 of \(totalImageCount)" : "Importing image \(self.imageList.count) of \(totalImageCount)");
+                                }
+                            }
+                        }
                     }
                 }
+            } else {
+                // User clicked Cancel in the Finder panel - return to idle
+                status.setPhase(to: .idle);
+                status.setStatusMessage("Idle...");
             }
         }
     }
     
-    func clearImages() {
-        self.imageList.removeAll();
+    func clearImages(_ status : AppStatusModel) {
+        // Show the "clearing" state, pause briefly so it's visible, then finish
+        status.setPhase(to: .clearing);
+        status.setStatusMessage("Clearing images...");
+        status.setProgress(0);
+        Task {
+            // Pause ~0.5s so the clearing state is perceptible before completing
+            try? await Task.sleep(nanoseconds: 1000 * 1_000_000);
+            await MainActor.run {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                    self.imageList.removeAll();
+                }
+                status.setProgress(PROGRESS_END);
+                status.setPhase(to: .finished);
+                status.setStatusMessage("Cleared Images!");
+            }
+        }
     }
     
     func containsImages() -> Bool {
@@ -177,8 +266,10 @@ class ImageModel {
 }
 
 struct ControlSideBar : View {
-    private let model: ImageModel = ImageModel();
-    private let status : AppStatus = AppStatus();
+    // @State keeps these instances alive across body re-renders (a plain `let`/`var`-
+    // would be recreated every render, losing imported images and status)
+    @State private var model: ImageModel = ImageModel();
+    @State private var status : AppStatusModel = AppStatusModel();
     var body: some View {
         VStack {
             Text("ImgLabs")
@@ -186,7 +277,7 @@ struct ControlSideBar : View {
             HStack {
                 Button(action: {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear button
-                        model.browseForImages();
+                        model.browseForImages(status);
                     }
                     // withAnimation tells swift to interpolate the entire view between two states
                 }) {
@@ -197,11 +288,12 @@ struct ControlSideBar : View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .cornerRadius(10)
-                };
+                }
+                .disabled(status.isBusy); // Prevent re-triggering while an operation runs
                 if model.containsImages() {
                     Button(action: {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                            model.clearImages();
+                            model.clearImages(status);
                         }
                     }) {
                         // How the button looks
@@ -211,10 +303,12 @@ struct ControlSideBar : View {
                             .padding()
                             .frame(maxWidth: .infinity)
                             .cornerRadius(10)
-                    }.transition(.move(edge: .trailing).combined(with: .opacity)); // Clear button moves in from right
+                    }
+                    .disabled(status.isBusy) // Prevent re-triggering while an operation runs
+                    .transition(.move(edge: .trailing).combined(with: .opacity)); // Clear button moves in from right
                 }
             }.padding(.horizontal, 20);
-            self.status.padding(.vertical, 20);
+            AppStatus(model: self.status).padding(.vertical, 20);
             Spacer();
         }
         .padding()
@@ -239,52 +333,6 @@ struct ImageGridPane : View {
 // View is the fundamental building block of SwiftUI
 // It is declarative, i.e., the expected result but supports imperative code
 struct ContentView: View { // This a custom view, it conatains a body
-    @State private var loadedImageList: [ImageData] = [];
-    @State private var isProcessing : Bool = false;
-    @State private var numberOfImages: Int = 0;
-    
-    private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12)
-    ]
-    
-    
-    func openMacFinder() { // mutating -- method is allowed to change properties of this struct (number of images variable in this case)
-        let openPanel = NSOpenPanel()
-        openPanel.title = "Choose an Image"
-        openPanel.showsHiddenFiles = false
-        openPanel.canChooseDirectories = false
-        openPanel.canChooseFiles = true
-        openPanel.allowsMultipleSelection = true
-        openPanel.allowedContentTypes = [.image] // Filters for images
-
-        // Open the native Finder sheet
-        openPanel.begin { response in
-            if response == .OK {
-                // Animate the entrance of the loading bar smoothly
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    self.numberOfImages = openPanel.urls.count
-                    self.isProcessing = true
-                }
-                Task { // Informs swift that items inside this block can be ran on another CPU thread
-                    for selectedURL in openPanel.urls { // Multiple images
-                        if let nsImage = NSImage(contentsOf: selectedURL),
-                           let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            let newImage = ImageData(img: cgImage);
-                            await MainActor.run { self.loadedImageList.append(newImage); } // Context switch back to main ui thread to append, thus forcing view update given the array is a state variable
-                            print("Loaded an Image!\n");
-                        }
-                    }
-                    await MainActor.run { // Update main thread UI again to indicate complete
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            self.isProcessing = false
-                        }
-                    }
-                }
-            }
-        }
-    }
     
     var body: some View { // some means that body returns an object which conforms to the View type (i.e., don't need to specify exactly what is returned)
         HStack {
