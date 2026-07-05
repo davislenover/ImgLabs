@@ -19,10 +19,12 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
     // Constructor for class
-    init(img : CGImage) {
+    // targetWidth/targetHeight define the canvas the image is resampled onto, so every ImageData in a
+    // set can be forced to a common size (required for the pixel-wise correlation to compare equal-length arrays)
+    init(img : CGImage, targetWidth : Int, targetHeight : Int) {
         // Extract raw pixel data
         self.cgImage = img;
-        self.ingestImage(imgToIngest: img);
+        self.ingestImage(imgToIngest: img, targetWidth: targetWidth, targetHeight: targetHeight);
     }
     
     deinit {
@@ -35,33 +37,60 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
         return self.cgImage;
     }
 
-    /// Extracts the raw pixel data from the image, stores it in pixelData and saves an imageContext with all other properties about the image
-    /// - Parameter imgToIngest: An image of type CGImage
+    /// The original pixel dimensions of the source image (before any resampling onto a canvas)
+    public func originalSize() -> (width: Int, height: Int)? {
+        guard let img = self.cgImage else { return nil; }
+        return (img.width, img.height);
+    }
+
+    /// The canvas dimensions the image is currently resampled to (drives the buffer/array length)
+    public func currentSize() -> (width: Int, height: Int)? {
+        guard let ctx = self.imageContext else { return nil; }
+        return (ctx.width, ctx.height);
+    }
+
+    /// Re-resamples the retained source image onto a new canvas size, replacing the current pixel data
+    /// Used when a smaller image joins the set and every image must be brought to a common size
+    public func resample(targetWidth : Int, targetHeight : Int) {
+        guard let img = self.cgImage else { return; }
+        // Free the previous buffer before ingestImage allocates a replacement
+        self.pixelData?.deallocate();
+        self.pixelData = nil;
+        self.ingestImage(imgToIngest: img, targetWidth: targetWidth, targetHeight: targetHeight);
+    }
+
+    /// Extracts the raw pixel data from the image, resampling it onto a fixed canvas, stores it in pixelData and saves an imageContext with all other properties about the image
+    /// - Parameters:
+    ///     - imgToIngest: An image of type CGImage
+    ///     - targetWidth: The canvas width to resample the image onto (source is scaled up or down to fit)
+    ///     - targetHeight: The canvas height to resample the image onto (source is scaled up or down to fit)
     /// - Returns: Void
-    private func ingestImage(imgToIngest : CGImage) -> () {
-        // Extract info about the image
-        let width: Int = imgToIngest.width;
-        let height: Int = imgToIngest.height;
-        let bytesPerRow: Int = imgToIngest.bytesPerRow;
+    private func ingestImage(imgToIngest : CGImage, targetWidth : Int, targetHeight : Int) -> () {
+        // The canvas dimensions drive the buffer, so the image is scaled to these regardless of its own size
         let bitsPerComponent: Int = imgToIngest.bitsPerComponent; // Indicates how many bytes are used per pixel (typically 4, one for R, G, B, A channels)
         let bytesPerPixel: Int = bitsPerComponent / 8 * ImageData.NUM_OF_VALUES_IN_PIXEL;
-        
+        // Tightly pack the rows for the target width (no source row padding, since this is our own buffer)
+        let bytesPerRow: Int = targetWidth * bytesPerPixel;
+
         // Allocate space for bitmap array (each pixel is 0 to 255, thus 8-bits * number of channels needed)
         // This is allocated on the heap, and a pointer is returned
-        self.pixelData = .allocate(capacity: width * height * bytesPerPixel); // Swift knows it's type and thus can use shorthand .
-        
+        self.pixelData = .allocate(capacity: targetWidth * targetHeight * bytesPerPixel); // Swift knows it's type and thus can use shorthand .
+
         // Draw the image into a CGContext object (as the image is likely compressed which this will decompress)
         self.imageContext = CGContext(
             data:self.pixelData, // Add raw pixel data here when image is drawn into this CGContext
-            width:width,
-            height:height,
+            width:targetWidth,
+            height:targetHeight,
             bitsPerComponent:bitsPerComponent,
             bytesPerRow:bytesPerRow,
             space:CGColorSpaceCreateDeviceRGB(),
             bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue // How to store the alpha info (doesn't matter what the type of the import image is, it will figure it out)
             // premultiplied basically means the RGB values have been multiplied by the alpha, last meants Alpha is stored in the last byte of the entire pixel data
         );
-        self.imageContext?.draw(imgToIngest, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)));
+        // Smooth interpolation when the source is scaled to the canvas (up or down)
+        self.imageContext?.interpolationQuality = .high;
+        // Drawing into a rect the size of the canvas resamples the source image to fit it exactly
+        self.imageContext?.draw(imgToIngest, in: CGRect(x: 0, y: 0, width: CGFloat(targetWidth), height: CGFloat(targetHeight)));
         // bitMapData should now contain the raw RGBA values
     }
     

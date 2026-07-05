@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PhotosUI
+import ImageIO // For reading image dimensions from file headers without decoding pixels
 
 public let PROGRESS_END : CGFloat = 1.0;
 public let PROGRESS_START : CGFloat = 0.0;
@@ -217,15 +218,62 @@ class ImageModel {
                     await MainActor.run {
                         status.setPhase(to: .importing);
                         status.setProgress(PROGRESS_START);
+                        status.setStatusMessage("Analyzing image sizes...");
+                    }
+
+                    // Pass 1: determine the common canvas size (min width/height across the whole set)
+                    // Read the new selections' dimensions straight from their file headers - no pixel decode, so
+                    // this stays cheap and low-memory. Fold in the already-imported images too (via their retained
+                    // source size) so the canvas is consistent across accumulated imports
+                    let existingImages = await MainActor.run { self.imageList };
+                    var minWidth = Int.max;
+                    var minHeight = Int.max;
+                    for image in existingImages {
+                        if let size = image.originalSize() {
+                            minWidth = min(minWidth, size.width);
+                            minHeight = min(minHeight, size.height);
+                        }
+                    }
+                    for selectedURL in selectedURLs {
+                        if let size = Self.imageDimensions(at: selectedURL) {
+                            minWidth = min(minWidth, size.width);
+                            minHeight = min(minHeight, size.height);
+                        }
+                    }
+
+                    // Nothing yielded a readable size - finish without importing
+                    guard minWidth != Int.max, minHeight != Int.max else {
+                        await MainActor.run {
+                            status.setPhase(to: .finished);
+                            status.setProgress(PROGRESS_END);
+                            status.setStatusMessage("No valid images to import");
+                        }
+                        return;
+                    }
+                    let canvasWidth = minWidth;
+                    let canvasHeight = minHeight;
+
+                    // If a smaller image just joined the set, re-resample the already-imported images down to the
+                    // new common canvas so every image in the list stays the same length for the correlation
+                    for image in existingImages {
+                        if let current = image.currentSize(),
+                           current.width != canvasWidth || current.height != canvasHeight {
+                            image.resample(targetWidth: canvasWidth, targetHeight: canvasHeight);
+                        }
+                    }
+
+                    await MainActor.run {
                         status.setStatusMessage("Importing images...");
                     }
+
+                    // Pass 2: decode each new selection and resample it onto the common canvas
                     var importedCount = 0; // How many were successfully decoded & added this run
                     for (index, selectedURL) in selectedURLs.enumerated() {
                         // Decode off the main thread (this Task isn't main-isolated)
                         var decoded : ImageData? = nil;
                         if let nsImage = NSImage(contentsOf: selectedURL),
                            let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            decoded = ImageData(img: cgImage);
+                            decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight);
                         }
                         let processed = index + 1;
                         await MainActor.run {
@@ -261,7 +309,20 @@ class ImageModel {
             }
         }
     }
-    
+
+    /// Reads an image's pixel dimensions from its file header without decoding the pixel data
+    /// - Parameter url: The image file to inspect
+    /// - Returns: The width/height in pixels, or nil if the header couldn't be read
+    private static func imageDimensions(at url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+            return nil;
+        }
+        return (width, height);
+    }
+
     func clearImages(_ status : AppStatusModel) {
         // Show the "clearing" state, pause briefly so it's visible, then finish
         status.setPhase(to: .clearing);
