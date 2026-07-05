@@ -73,30 +73,55 @@ public actor DotProduct: ComputeKernel {
 
 class DotProductFactory: ComputeKernelCreatable {
     private var arr2Bufable : (any MTBufable)?;
-    
+
+    // Caches the GPU buffer for each source array so an array reused across many pairs (as in an
+    // all-pairs similarity matrix) is only uploaded to the device once instead of per kernel
+    // Keyed by reference identity, so this only reuses buffers for class-based MTBufable conformers
+    // Assumes a bufable's contents are stable while it is cached; call clearBufferCache() if they change
+    private var bufferCache : [ObjectIdentifier: MTLBuffer] = [:];
+
     static func getFactoryName() -> String {
         return DotProduct.getFunctionName();
     }
-    
+
     public func setArr2(bufable: any MTBufable) {
         self.arr2Bufable = bufable;
     }
-    
+
+    /// Drops all cached operand buffers, releasing the GPU memory they hold
+    public func clearBufferCache() {
+        self.bufferCache.removeAll();
+    }
+
+    /// Returns the MTLBuffer for a bufable, reusing a previously created one when the same object
+    /// has already been converted (avoids re-uploading arrays that are shared across many kernels)
+    private func cachedBuffer(for bufable: any MTBufable, device: MTLDevice) async throws -> MTLBuffer {
+        let key = ObjectIdentifier(bufable as AnyObject);
+        if let existing = self.bufferCache[key] {
+            return existing;
+        }
+        let buffer = try await bufable.toMTLBuffer(device);
+        self.bufferCache[key] = buffer;
+        return buffer;
+    }
+
     func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
         // Get array values, convert to MTLBuffer (put in shared memory)
         let devToAlloc : MTLDevice = context.getDevice();
-        guard let arr1Buf : MTLBuffer = try? await bufable.toMTLBuffer(devToAlloc) else {
+
+        guard let arr2Bufable = self.arr2Bufable else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        
-        guard let arr2Buf : MTLBuffer = try? await self.arr2Bufable?.toMTLBuffer(devToAlloc) else {
-            throw KernelEngineError.failedToAllocateMTLBufferMemory;
-        }
+
+        // Reuse previously uploaded operand buffers where possible; both operands are read-only in the kernel
+        let arr1Buf : MTLBuffer = try await self.cachedBuffer(for: bufable, device: devToAlloc);
+        let arr2Buf : MTLBuffer = try await self.cachedBuffer(for: arr2Bufable, device: devToAlloc);
 
         guard let numOfValues : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of values");
         }
         // resultAlloc will be wrapped in a metal atomic float in the kernel
+        // The output is unique per kernel, so it is never cached/shared
         guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
