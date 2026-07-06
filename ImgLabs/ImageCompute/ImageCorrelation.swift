@@ -30,70 +30,71 @@ class ImageCorrelation {
         let factoryDot : DotProductFactory = DotProductFactory();
         
         print("Computing grayscale...");
-        // First compute grayscale of both images
+        // First compute grayscale of both images. As in similarityMatrix, the array intermediates stay resident
+        // on the GPU (published as DeviceBuffers) and feed straight into the next stage without a CPU round-trip
         let grayScaleKernelImg1 : ComputeKernel = try await factoryGrayScale.createKernel(bufable: image1, context: self.computeContext);
-        let grayScaleValImg1 : FloatArrayResult = FloatArrayResult();
+        let grayScaleValImg1 : DeviceBufferResult = DeviceBufferResult();
         await grayScaleKernelImg1.addObserver(grayScaleValImg1);
         let grayScaleKernelImg2 : ComputeKernel = try await factoryGrayScale.createKernel(bufable: image2, context: self.computeContext);
-        let grayScaleValImg2 : FloatArrayResult = FloatArrayResult();
+        let grayScaleValImg2 : DeviceBufferResult = DeviceBufferResult();
         await grayScaleKernelImg2.addObserver(grayScaleValImg2);
         try await MetalRunner.runCompute(from: self.computeContext, for: [grayScaleKernelImg1,grayScaleKernelImg2]);
-        
+
         // Next find the mean value of the grayscale
         print("Finding mean of grayscale...");
-        let meanKernelImg1 : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleValImg1, context: self.computeContext);
+        let meanKernelImg1 : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleValImg1.buffer!, context: self.computeContext);
         let meanValImg1 : FloatValueResult = FloatValueResult();
         await meanKernelImg1.addObserver(meanValImg1);
-        let meanKernelImg2 : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleValImg2, context: self.computeContext);
+        let meanKernelImg2 : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleValImg2.buffer!, context: self.computeContext);
         let meanValImg2 : FloatValueResult = FloatValueResult();
         await meanKernelImg2.addObserver(meanValImg2);
         try await MetalRunner.runCompute(from: self.computeContext, for: [meanKernelImg1,meanKernelImg2]);
-        
+
         // Next find the subtraction of the grayscale values from the mean
         print("Finding subtraction of grayscale from mean...");
-        let subValsImg1 : FloatArrayResult = FloatArrayResult();
+        let subValsImg1 : DeviceBufferResult = DeviceBufferResult();
         factorySubtractionOne.setSubtractionValue(value: meanValImg1.result);
-        let subKernelImg1 : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleValImg1, context: self.computeContext);
+        let subKernelImg1 : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleValImg1.buffer!, context: self.computeContext);
         await subKernelImg1.addObserver(subValsImg1);
-        let subValsImg2 : FloatArrayResult = FloatArrayResult();
+        let subValsImg2 : DeviceBufferResult = DeviceBufferResult();
         factorySubtractionOne.setSubtractionValue(value: meanValImg2.result);
-        let subKernelImg2 : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleValImg2, context: self.computeContext);
+        let subKernelImg2 : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleValImg2.buffer!, context: self.computeContext);
         await subKernelImg2.addObserver(subValsImg2);
         try await MetalRunner.runCompute(from: self.computeContext, for: [subKernelImg1,subKernelImg2]);
-        
+
         // Do the same as before but with the subtraction result being put to a power of 2
         print("Finding subtraction of grayscale from mean power of 2...");
-        let subSqrValsImg1 : FloatArrayResult = FloatArrayResult();
+        let subSqrValsImg1 : DeviceBufferResult = DeviceBufferResult();
         // subVals already has the mean removed; only square it here (subtract 0), otherwise the mean is removed twice
         factorySubtractionSqr.setSubtractionValue(value: 0.0);
-        let subSqrKernelImg1 : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: subValsImg1, context: self.computeContext);
+        let subSqrKernelImg1 : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: subValsImg1.buffer!, context: self.computeContext);
         await subSqrKernelImg1.addObserver(subSqrValsImg1);
-        let subSqrValsImg2 : FloatArrayResult = FloatArrayResult();
+        let subSqrValsImg2 : DeviceBufferResult = DeviceBufferResult();
         // subVals already has the mean removed; only square it here (subtract 0), otherwise the mean is removed twice
-        let subSqrKernelImg2 : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: subValsImg2, context: self.computeContext);
+        let subSqrKernelImg2 : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: subValsImg2.buffer!, context: self.computeContext);
         await subSqrKernelImg2.addObserver(subSqrValsImg2);
         try await MetalRunner.runCompute(from: self.computeContext, for: [subSqrKernelImg1,subSqrKernelImg2]);
-        
+
         // Find the summation of squared results from before
         print("Finding summation of squared results...");
         let sumSqrValsImg1 : FloatValueResult = FloatValueResult();
-        let sumSqrKernelImg1 : ComputeKernel = try await factoryMean.createKernel(bufable: subSqrValsImg1, context: self.computeContext);
+        let sumSqrKernelImg1 : ComputeKernel = try await factoryMean.createKernel(bufable: subSqrValsImg1.buffer!, context: self.computeContext);
         await sumSqrKernelImg1.addObserver(sumSqrValsImg1);
         let sumSqrValsImg2 : FloatValueResult = FloatValueResult();
-        let sumSqrKernelImg2 : ComputeKernel = try await factoryMean.createKernel(bufable: subSqrValsImg2, context: self.computeContext);
+        let sumSqrKernelImg2 : ComputeKernel = try await factoryMean.createKernel(bufable: subSqrValsImg2.buffer!, context: self.computeContext);
         await sumSqrKernelImg2.addObserver(sumSqrValsImg2);
         try await MetalRunner.runCompute(from: self.computeContext, for: [sumSqrKernelImg1,sumSqrKernelImg2]);
-        let sumSqrImg1 : Float = sumSqrValsImg1.result * Float(subSqrValsImg1.result.count); // Mean so multiply by number of vals
-        let sumSqrImg2 : Float = sumSqrValsImg2.result * Float(subSqrValsImg2.result.count); // Mean so multiply by number of vals
-        
+        let sumSqrImg1 : Float = sumSqrValsImg1.result * Float(try subSqrValsImg1.buffer!.MTLBufferSize()); // Mean so multiply by number of vals
+        let sumSqrImg2 : Float = sumSqrValsImg2.result * Float(try subSqrValsImg2.buffer!.MTLBufferSize()); // Mean so multiply by number of vals
+
         // Find the dot product of the non squared results
         print("Finding dot product of grayscale subtraction from mean...");
         let dotVal : FloatValueResult = FloatValueResult();
-        factoryDot.setArr2(bufable: subValsImg2);
-        let dotKernel : ComputeKernel = try await factoryDot.createKernel(bufable: subValsImg1, context: self.computeContext);
+        factoryDot.setArr2(bufable: subValsImg2.buffer!);
+        let dotKernel : ComputeKernel = try await factoryDot.createKernel(bufable: subValsImg1.buffer!, context: self.computeContext);
         await dotKernel.addObserver(dotVal);
         try await MetalRunner.runCompute(from: self.computeContext, for: [dotKernel]);
-        
+
         // return the ZNCC result
         return dotVal.result / (sumSqrImg1 * sumSqrImg2).squareRoot();
     }
@@ -105,29 +106,30 @@ class ImageCorrelation {
     func similarityMatrix(images: [ImageData]) async throws -> [[Float]] {
         // Nothing to compare -- return an empty matrix (mirrors the old per-pair loop, which produced none)
         guard !images.isEmpty else { return []; }
+        // Intermediate arrays (grayscale, then the mean-centred and squared results) stay resident on the GPU
+        // between stages: each array kernel publishes its output as a DeviceBuffer, which the next factory reads directly
+        // Only the small scalars (means, sums) and the final matrix are read back to the CPU
+
         // First compute the grayscale of every image
         var grayScaleKernels : [ComputeKernel] = [];
-        var grayScaleImages : [FloatArrayResult] = [];
+        var grayScaleImages : [DeviceBufferResult] = [];
         let grayScaleFactory : GrayScaleKernelFactory = GrayScaleKernelFactory();
         for image in images {
             let grayScaleKernel : ComputeKernel = try await grayScaleFactory.createKernel(bufable: image, context: self.computeContext);
-            let grayScaleImageResult : FloatArrayResult = FloatArrayResult();
+            let grayScaleImageResult : DeviceBufferResult = DeviceBufferResult();
             await grayScaleKernel.addObserver(grayScaleImageResult);
             grayScaleImages.append(grayScaleImageResult);
             grayScaleKernels.append(grayScaleKernel);
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleKernels); // Will suspend here until completion
-        
-        // Each grayscale array is fed to the mean factory and BOTH subtraction factories, so share one
-        // cache across them: every grayscale array is uploaded to the GPU once instead of three times
-        let statsCache : BufferCache = BufferCache();
 
-        // Find the mean in all grayscale images
-        let factoryMean : MeanValueFactory = MeanValueFactory(bufferCache: statsCache);
+        // Find the mean in all grayscale images. Each grayscale DeviceBuffer is read straight off the GPU (no
+        // upload)
+        let factoryMean : MeanValueFactory = MeanValueFactory();
         var grayScaleMeanKernels : [ComputeKernel] = [];
         var grayScaleImageMeans : [FloatValueResult] = [];
         for grayScaleImage in grayScaleImages {
-            let meanKernel : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleImage, context: self.computeContext);
+            let meanKernel : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
             let meanValue : FloatValueResult = FloatValueResult();
             await meanKernel.addObserver(meanValue);
             grayScaleImageMeans.append(meanValue);
@@ -136,21 +138,21 @@ class ImageCorrelation {
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleMeanKernels);
         
         // Next find the subtraction of the grayscale values from the mean and also do the same but every result to the power of two
-        let factorySubtractionOne = SubtractionFactory(bufferCache: statsCache);
-        let factorySubtractionSqr = SubtractionFactory(bufferCache: statsCache);
+        let factorySubtractionOne = SubtractionFactory();
+        let factorySubtractionSqr = SubtractionFactory();
         factorySubtractionSqr.setPowValue(value:2.0);
         var grayScaleSubtractKernels : [any ComputeKernel] = [];
-        var grayScaleSubtractArrays : [FloatArrayResult] = [];
-        var grayScaleSubtractPow2Arrays : [FloatArrayResult] = [];
+        var grayScaleSubtractArrays : [DeviceBufferResult] = [];
+        var grayScaleSubtractPow2Arrays : [DeviceBufferResult] = [];
         for (index,grayScaleImage) in grayScaleImages.enumerated() {
-            let subtractResult : FloatArrayResult = FloatArrayResult();
-            let subtractPow2Result : FloatArrayResult = FloatArrayResult();
+            let subtractResult : DeviceBufferResult = DeviceBufferResult();
+            let subtractPow2Result : DeviceBufferResult = DeviceBufferResult();
             let grayScaleImageMean : Float = grayScaleImageMeans[index].result;
             factorySubtractionOne.setSubtractionValue(value: grayScaleImageMean);
             factorySubtractionSqr.setSubtractionValue(value: grayScaleImageMean);
-            let subtractKernel : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleImage, context: self.computeContext);
+            let subtractKernel : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
             await subtractKernel.addObserver(subtractResult);
-            let subtractPow2Kernel : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: grayScaleImage, context: self.computeContext);
+            let subtractPow2Kernel : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
             await subtractPow2Kernel.addObserver(subtractPow2Result);
             grayScaleSubtractKernels.append(subtractKernel);
             grayScaleSubtractKernels.append(subtractPow2Kernel);
@@ -166,7 +168,7 @@ class ImageCorrelation {
         var meanPow2Kernels : [ComputeKernel] = [];
         for pow2ImageValueArray in grayScaleSubtractPow2Arrays {
             let meanPow2Result : FloatValueResult = FloatValueResult();
-            let meanPow2Kernel : ComputeKernel = try await factoryMean.createKernel(bufable: pow2ImageValueArray, context: self.computeContext);
+            let meanPow2Kernel : ComputeKernel = try await factoryMean.createKernel(bufable: pow2ImageValueArray.buffer!, context: self.computeContext);
             await meanPow2Kernel.addObserver(meanPow2Result);
             meanPow2Vals.append(meanPow2Result);
             meanPow2Kernels.append(meanPow2Kernel);
@@ -174,16 +176,19 @@ class ImageCorrelation {
         try await MetalRunner.runCompute(from: self.computeContext, for: meanPow2Kernels);
         var sumPow2 : [Float] = [];
         for (index,meanPow2) in meanPow2Vals.enumerated() {
-            sumPow2.append(meanPow2.result * Float(grayScaleSubtractPow2Arrays[index].result.count));
+            // Mean of the squared values * their count == the sum of squares (element count read from the buffer)
+            let elementCount : Float = Float(try grayScaleSubtractPow2Arrays[index].buffer!.MTLBufferSize());
+            sumPow2.append(meanPow2.result * elementCount);
         }
        
-        // Compute every pairwise dot product in a single batched dispatch instead of separate
-        // DotProduct kernels. The factory assembles the mean-centered arrays into one strided device buffer;
-        // the batched kernel reduces each lower-triangle pair (row, col), returning one [Float] of results
+        // Compute every pairwise dot product in a single batched dispatch instead of separate DotProduct
+        // kernels. The factory assembles the resident mean-centred buffers into one strided device buffer; the
+        // batched kernel reduces each lower-triangle pair (row, col), returning one [Float] of results
         let imageCount : Int = grayScaleSubtractArrays.count;
+        let subtractBuffers : [any MTBufable] = grayScaleSubtractArrays.map { $0.buffer! };
         let dotProductFactory : BatchedDotProductFactory = BatchedDotProductFactory();
-        dotProductFactory.setImageArrays(grayScaleSubtractArrays);
-        let dotProductKernel : ComputeKernel = try await dotProductFactory.createKernel(bufable: grayScaleSubtractArrays[0], context: self.computeContext);
+        dotProductFactory.setImageArrays(subtractBuffers);
+        let dotProductKernel : ComputeKernel = try await dotProductFactory.createKernel(bufable: subtractBuffers[0], context: self.computeContext);
         let dotProductResults : FloatArrayResult = FloatArrayResult();
         await dotProductKernel.addObserver(dotProductResults);
         try await MetalRunner.runCompute(from: self.computeContext, for: [dotProductKernel]);
@@ -227,6 +232,15 @@ class ImageCorrelation {
         var result: Float = 0;
         func update(with: Float) {
             self.result = with;
+        }
+    }
+
+    /// Captures a kernel's resident output buffer (published as a DeviceBuffer) so it can be handed straight to
+    /// the next kernel's factory without a CPU round-trip
+    private class DeviceBufferResult : ResultObserver<DeviceBuffer> {
+        var buffer : DeviceBuffer? = nil;
+        func update(with: DeviceBuffer) {
+            self.buffer = with;
         }
     }
 

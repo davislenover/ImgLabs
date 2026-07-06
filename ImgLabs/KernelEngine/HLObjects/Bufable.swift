@@ -20,3 +20,27 @@ public protocol MTBufable {
     func MTLBufferSize() throws -> UInt32;
 }
 
+/// Wraps an MTLBuffer that already lives on the compute device. As an MTBufable, toMTLBuffer hands back that
+/// same buffer with no allocation or copy, so one kernel's output can be fed straight into the next kernel's
+/// input while the data stays resident on the GPU
+/// Assumes the buffer holds Float elements, as every array-producing kernel in this engine does
+public final class DeviceBuffer : MTBufable {
+    private let buffer : MTLBuffer;
+
+    /// - Parameter buffer: an MTLBuffer already allocated on the device (typically a kernel's output buffer)
+    public init(_ buffer: MTLBuffer) {
+        self.buffer = buffer;
+    }
+
+    /// Returns the wrapped buffer unchanged. The device argument is ignored: the buffer is assumed to already
+    /// live on the device in use, so there is nothing to allocate or copy
+    public func toMTLBuffer(_ device: MTLDevice) async throws -> MTLBuffer {
+        return self.buffer;
+    }
+
+    /// The number of Float elements the wrapped buffer holds
+    public func MTLBufferSize() throws -> UInt32 {
+        return UInt32(self.buffer.length / MemoryLayout<Float>.stride);
+    }
+}
+
