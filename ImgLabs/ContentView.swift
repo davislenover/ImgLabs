@@ -44,6 +44,7 @@ class AppStatusModel {
         case analyzing
         case clearing
         case browsing
+        case copying
         case finished
         case error
     }
@@ -56,7 +57,7 @@ class AppStatusModel {
 
     /// True while an operation is in progress - used to disable controls & drive the spinner
     var isBusy : Bool {
-        return self.curPhase == .importing || self.curPhase == .analyzing || self.curPhase == .clearing || self.curPhase == .browsing;
+        return self.curPhase == .importing || self.curPhase == .analyzing || self.curPhase == .clearing || self.curPhase == .browsing || self.curPhase == .copying;
     }
 
     func setPhase(to: Phase) {
@@ -278,7 +279,7 @@ class ImageModel {
                         var decoded : ImageData? = nil;
                         if let nsImage = NSImage(contentsOf: selectedURL),
                            let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight);
+                            decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
                         }
                         let processed = index + 1;
                         await MainActor.run {
@@ -484,7 +485,7 @@ struct ImageGridPane : View {
                 // Something is being calculated
                 self.stateIndicator(icon: "wand.and.rays", message: "Analyzing images...");
             } else if hasValidResults {
-                DuplicateView(images: model.images, matrix: znccObj.results);
+                DuplicateView(images: model.images, matrix: znccObj.results, status: status);
             } else {
                 // Nothing to show yet
                 self.stateIndicator(icon: "photo.on.rectangle.angled", message: "Import photos and press Analyze to find duplicates");

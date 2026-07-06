@@ -18,12 +18,15 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
     private var cgImage: CGImage?;
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
+    private var sourceURL: URL; // Stores the path of the original file
+    
     // Constructor for class
     // targetWidth/targetHeight define the canvas the image is resampled onto, so every ImageData in a
     // set can be forced to a common size (required for the pixel-wise correlation to compare equal-length arrays)
-    init(img : CGImage, targetWidth : Int, targetHeight : Int) {
+    init(img : CGImage, targetWidth : Int, targetHeight : Int, filePath: URL) {
         // Extract raw pixel data
         self.cgImage = img;
+        self.sourceURL = filePath;
         self.ingestImage(imgToIngest: img, targetWidth: targetWidth, targetHeight: targetHeight);
     }
     
@@ -33,9 +36,11 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
         }
     }
     
-    public func getCGImage() -> CGImage? {
-        return self.cgImage;
-    }
+    /// Gets the file path of the image
+    public func getURL() -> URL {return self.sourceURL;}
+    
+    /// Gets the CGImage representation of the ImageData object
+    public func getCGImage() -> CGImage? {return self.cgImage;}
 
     /// The original pixel dimensions of the source image (before any resampling onto a canvas)
     public func originalSize() -> (width: Int, height: Int)? {
