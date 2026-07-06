@@ -57,11 +57,11 @@ Clustering uses a **union-find** (disjoint-set) structure: every image pair scor
 
 Zero-Normalized Cross-Correlation is a lighting-invariant measure of similarity between two signals. For two images `A` and `B` it yields a value in `[-1, 1]`, where `1` means identical:
 
-```
-                       Σ (A - meanA)·(B - meanB)
-ZNCC(A, B)  =  ────────────────────────────────────────
-               √( Σ(A - meanA)²  ·  Σ(B - meanB)² )
-```
+$$
+\text{ZNCC}(A, B) = \frac{\sum_i (A_i - \bar{A})(B_i - \bar{B})}{\sqrt{\sum_i (A_i - \bar{A})^2 \; \sum_i (B_i - \bar{B})^2}}
+$$
+
+where $\bar{A}$ and $\bar{B}$ are the mean pixel values of images $A$ and $B$, and $i$ ranges over every pixel.
 
 Subtracting the mean removes overall brightness; normalizing by the standard deviations removes contrast — so ZNCC compares *structure*, not exposure. `ImageCorrelation` realizes this as a chain of GPU passes: **grayscale → mean → subtract-mean → square → sum → dot product**, each one a `ComputeKernel` run through the engine.
 

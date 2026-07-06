@@ -19,7 +19,7 @@ class ImageCorrelation {
     /// - Parameters:
     ///     - image1: The first image to compare
     ///     - image2: The second image to compare
-    /// - Returns: A floating point value between 0 and 1 (A higher value means more similarity between the two images)
+    /// - Returns: A floating point value between -1 and 1 (A higher value means more similarity between the two images; 1 means identical)
     func howSimilar(image1: ImageData, image2: ImageData) async throws -> Float {
         // If the exact same images are used in ZNCC, the result should be 1
         let factoryGrayScale = GrayScaleKernelFactory();
