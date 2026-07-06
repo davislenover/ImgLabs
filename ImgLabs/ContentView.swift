@@ -16,6 +16,14 @@ public let PROGRESS_START : CGFloat = 0.0;
 class ZNCCModel {
     private var znccResults : [[Float]] = [];
     private let metalContext : MetalComputeContext? = MetalComputeContext();
+
+    /// The most recent similarity matrix (empty until an analysis has run). Read-only to callers
+    public var results : [[Float]] { self.znccResults; }
+
+    /// Discards the current results (e.g. when the underlying images change so the matrix is stale)
+    public func clear() {
+        self.znccResults = [];
+    }
     public func getZNCC(_ imgList : [ImageData]) async throws {
         guard let context = metalContext else {
             return;
@@ -96,7 +104,7 @@ class AppStatusModel {
     }
 }
 
-// Renders the status indicator described by an AppStatusModel.
+// Renders the status indicator described by an AppStatusModel
 struct AppStatus : View {
     let model : AppStatusModel;
     private let iconSize : CGFloat = 20;
@@ -167,17 +175,11 @@ struct AppStatus : View {
                         Capsule().stroke(.white.opacity(0.2), lineWidth: 1)
                     )
             }
-            // Add progress bar below status.
-            // Two distinct ProgressViews so SwiftUI gives each its own identity:
-            // when progress is nil (idle / after finished), it mounts a fresh
-            // *indeterminate* bar, which reliably restarts its animation.
-            Group {
-                if let progress = self.model.progress {
-                    ProgressView(value: progress, total: PROGRESS_END) // Determinate: tracks import
-                } else {
-                    ProgressView() // Indeterminate: continuously animated resting state
-                }
-            }
+            // Add progress bar below status
+            // Always a determinate bar: when there's no progress (idle / after finished) it sits at 0 as a
+            // static, empty track instead of an animated indeterminate sweep. progress ?? 0 supplies the
+            // fallback value when model.progress is nil
+            ProgressView(value: self.model.progress ?? 0, total: PROGRESS_END)
             .progressViewStyle(.linear) // Forces the horizontal bar layout
             .tint(self.model.isProgressVisible ? .white : .gray)
             .animation(.default, value: self.model.progress)
@@ -190,7 +192,10 @@ struct AppStatus : View {
 @Observable
 class ImageModel {
     private var imageList: [ImageData] = [];
-    
+
+    /// The imported images, in the same order the similarity matrix was built from. Read-only to callers
+    public var images : [ImageData] { self.imageList; }
+
     func browseForImages(_ status : AppStatusModel) {
         status.setPhase(to: .browsing);
         status.setStatusMessage("Browsing for images...");
@@ -372,11 +377,11 @@ class ImageModel {
 }
 
 struct ControlSideBar : View {
-    // @State keeps these instances alive across body re-renders (a plain `let`/`var`-
-    // would be recreated every render, losing imported images and status)
-    @State private var model: ImageModel = ImageModel();
-    @State private var status : AppStatusModel = AppStatusModel();
-    @State private var znccObj : ZNCCModel = ZNCCModel();
+    // Received from the parent (ContentView) so the grid pane can share the same state
+    // These are @Observable classes, so reading their properties here observes them for changes
+    let model: ImageModel;
+    let status : AppStatusModel;
+    let znccObj : ZNCCModel;
     // Drives the confirmation alert shown when importing over existing images
     @State private var showImportConfirm : Bool = false;
 
@@ -419,6 +424,7 @@ struct ControlSideBar : View {
                     Button(action: {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                             model.clearImages(status);
+                            znccObj.clear(); // Old results reference the now-removed images, so drop them
                         }
                     }) {
                         // How the button looks
@@ -459,26 +465,69 @@ struct ControlSideBar : View {
 }
 
 struct ImageGridPane : View {
+    // Shared state from the parent. Reading these observable properties makes this pane re-render
+    // automatically when the analysis phase changes or a matrix is produced
+    let model : ImageModel;
+    let status : AppStatusModel;
+    let znccObj : ZNCCModel;
+
+    // Results are only safe to show when the matrix matches the current image set. After clearing or
+    // importing more images without re-analyzing, the old matrix is stale (a different size), so we treat
+    // it as "no results" rather than indexing past the end of the images array (which would crash)
+    private var hasValidResults : Bool {
+        !znccObj.results.isEmpty && znccObj.results.count == model.images.count;
+    }
+
     var body : some View {
         VStack {
-            Text("Image Grid")
-                .font(.system(size: 40, weight: .black));
-            Spacer();
+            if status.curPhase == .analyzing {
+                // Something is being calculated
+                self.stateIndicator(icon: "wand.and.rays", message: "Analyzing images...");
+            } else if hasValidResults {
+                DuplicateView(images: model.images, matrix: znccObj.results);
+            } else {
+                // Nothing to show yet
+                self.stateIndicator(icon: "photo.on.rectangle.angled", message: "Import photos and press Analyze to find duplicates");
+            }
         }
+        // Fill the available space BEFORE the glass background, so the glass keeps the full pane size
+        // regardless of how little content is inside it (otherwise it shrinks to fit the content)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .glassEffect(.regular, in: .rect(cornerRadius: 10))
-        .frame(maxHeight: .infinity)
+    }
+
+    // A centered, animated placeholder used for the "calculating" and "empty" states
+    // .symbolEffect(.pulse, ...) animates the SF Symbol; .repeat(.continuous) keeps it looping
+    private func stateIndicator(icon: String, message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 60))
+                .foregroundStyle(.secondary)
+                .symbolEffect(.pulse, options: .repeat(.continuous), isActive: true);
+            Text(message)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center);
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 // View is the fundamental building block of SwiftUI
 // It is declarative, i.e., the expected result but supports imperative code
 struct ContentView: View { // This a custom view, it conatains a body
-    
+    // The shared app state lives here (the common parent) so both panes can read it: the sidebar drives
+    // imports/analysis, and the grid pane displays the results. @State keeps the instances alive across
+    // re-renders; being @Observable classes, passing them to child views lets those views observe changes
+    @State private var model : ImageModel = ImageModel();
+    @State private var status : AppStatusModel = AppStatusModel();
+    @State private var znccObj : ZNCCModel = ZNCCModel();
+
     var body: some View { // some means that body returns an object which conforms to the View type (i.e., don't need to specify exactly what is returned)
         HStack {
-            ImageGridPane()
-            ControlSideBar()
+            ImageGridPane(model: self.model, status: self.status, znccObj: self.znccObj)
+            ControlSideBar(model: self.model, status: self.status, znccObj: self.znccObj)
         }.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 0, style: .continuous));
     }
 }
