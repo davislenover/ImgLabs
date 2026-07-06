@@ -123,9 +123,14 @@ class ImageCorrelation {
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleKernels); // Will suspend here until completion
 
-        // Find the mean in all grayscale images. Each grayscale DeviceBuffer is read straight off the GPU (no
-        // upload)
-        let factoryMean : MeanValueFactory = MeanValueFactory();
+        // The mean and both subtraction factories share one BufferCache. With resident DeviceBuffers this is no
+        // longer for upload de-duplication (toMTLBuffer is a no-op passthrough now) -- it exists so the cache's
+        // hold on each intermediate can be dropped at a stage boundary. Clearing it, together with releasing the
+        // kernels that read/wrote that buffer, is what lets the GPU actually reclaim a spent intermediate
+        let statsCache : BufferCache = BufferCache();
+
+        // Find the mean in all grayscale images. Each grayscale DeviceBuffer is read straight off the GPU (no upload)
+        let factoryMean : MeanValueFactory = MeanValueFactory(bufferCache: statsCache);
         var grayScaleMeanKernels : [ComputeKernel] = [];
         var grayScaleImageMeans : [FloatValueResult] = [];
         for grayScaleImage in grayScaleImages {
@@ -138,8 +143,8 @@ class ImageCorrelation {
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleMeanKernels);
         
         // Next find the subtraction of the grayscale values from the mean and also do the same but every result to the power of two
-        let factorySubtractionOne = SubtractionFactory();
-        let factorySubtractionSqr = SubtractionFactory();
+        let factorySubtractionOne = SubtractionFactory(bufferCache: statsCache);
+        let factorySubtractionSqr = SubtractionFactory(bufferCache: statsCache);
         factorySubtractionSqr.setPowValue(value:2.0);
         var grayScaleSubtractKernels : [any ComputeKernel] = [];
         var grayScaleSubtractArrays : [DeviceBufferResult] = [];
@@ -161,7 +166,16 @@ class ImageCorrelation {
             
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleSubtractKernels);
-        
+
+        // Early release: the grayscale buffers were only needed to produce the subtractions above, so drop every
+        // reference to them now -- the grayscale kernels + results, the subtraction kernels that read them as
+        // input, and the shared cache's hold. Once all four are gone the GPU can reclaim that memory before the
+        // remaining stages run. The subtraction outputs survive via grayScaleSubtractArrays / grayScaleSubtractPow2Arrays
+        grayScaleKernels.removeAll();
+        grayScaleImages.removeAll();
+        grayScaleSubtractKernels.removeAll();
+        await statsCache.clear();
+
         // Find the summation of the power of two results from before
         // Do this by finding the mean of the power 2 arrays, then multiply by their count
         var meanPow2Vals : [FloatValueResult] = [];
@@ -180,7 +194,14 @@ class ImageCorrelation {
             let elementCount : Float = Float(try grayScaleSubtractPow2Arrays[index].buffer!.MTLBufferSize());
             sumPow2.append(meanPow2.result * elementCount);
         }
-       
+
+        // Early release: the squared arrays and the mean kernels that consumed them are spent (their sums are now
+        // in sumPow2). Drop them and re-clear the shared cache so only the mean-centred buffers remain resident
+        // for the dot stage
+        grayScaleSubtractPow2Arrays.removeAll();
+        meanPow2Kernels.removeAll();
+        await statsCache.clear();
+
         // Compute every pairwise dot product in a single batched dispatch instead of separate DotProduct
         // kernels. The factory assembles the resident mean-centred buffers into one strided device buffer; the
         // batched kernel reduces each lower-triangle pair (row, col), returning one [Float] of results
