@@ -197,7 +197,7 @@ class ImageModel {
     /// The imported images, in the same order the similarity matrix was built from. Read-only to callers
     public var images : [ImageData] { self.imageList; }
 
-    func browseForImages(_ status : AppStatusModel) {
+    func browseForImages(_ status : AppStatusModel, _ maxCanvasDim : Int) {
         status.setPhase(to: .browsing);
         status.setStatusMessage("Browsing for images...");
         let openPanel = NSOpenPanel()
@@ -256,8 +256,10 @@ class ImageModel {
                         }
                         return;
                     }
-                    let canvasWidth = minWidth;
-                    let canvasHeight = minHeight;
+                    // Cap the canvas so huge originals (e.g. RAW) don't blow up memory -- every image is
+                    // decoded and stored at this size, so this is the main lever on memory usage.
+                    let canvasWidth = min(minWidth, maxCanvasDim);
+                    let canvasHeight = min(minHeight, maxCanvasDim);
 
                     // If a smaller image just joined the set, re-resample the already-imported images down to the
                     // new common canvas so every image in the list stays the same length for the correlation
@@ -407,11 +409,17 @@ struct ControlSideBar : View {
     let znccObj : ZNCCModel;
     // Drives the confirmation alert shown when importing over existing images
     @State private var showImportConfirm : Bool = false;
+    
+    // The comparison canvas is capped to this many pixels per side. Duplicate detection doesn't need full
+    // resolution, and every image is decoded/resampled/compared at the canvas size -- so this bounds the
+    // memory per image (canvas^2 * 4 bytes) regardless of how large the originals (e.g. RAW) are. Tune for
+    // the quality/memory trade-off: larger = more detail, more memory
+    @State private var maxCanvasDim : Double = 512;
 
     /// Opens the Finder panel to import images (wrapped so both the button and alert can call it)
     private func startImport() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear button
-            model.browseForImages(status);
+            model.browseForImages(status,Int(maxCanvasDim));
         }
     }
 
@@ -479,6 +487,10 @@ struct ControlSideBar : View {
                 }
             }.padding(.horizontal, 20);
             AppStatus(model: self.status).padding(.vertical, 20);
+            Text("Options");
+            Text("Max Canvas Size (Higher -> Higher Memory Usage/More Accurate Results): \(self.maxCanvasDim.formatted(.number.precision(.fractionLength(0...2))))");
+            Slider(value: $maxCanvasDim, in: 512...2048, step: 128)
+                .disabled(status.isBusy);
             Spacer();
         }
         .padding()
