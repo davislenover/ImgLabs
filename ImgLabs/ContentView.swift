@@ -227,9 +227,9 @@ class ImageModel {
                         status.setStatusMessage("Analyzing image sizes...");
                     }
 
-                    // Pass 1: determine the common canvas size (min width/height across the whole set)
+                    // Determine the common canvas size (min width/height across the whole set)
                     // Read the new selections' dimensions straight from their file headers - no pixel decode, so
-                    // this stays cheap and low-memory. Fold in the already-imported images too (via their retained
+                    // this is low-memory. Add in the already-imported images too (via their retained
                     // source size) so the canvas is consistent across accumulated imports
                     let existingImages = await MainActor.run { self.imageList };
                     var minWidth = Int.max;
@@ -272,18 +272,17 @@ class ImageModel {
                         status.setStatusMessage("Importing images...");
                     }
 
-                    // Pass 2: decode each new selection and resample it onto the common canvas
+                    // Decode + build each image ON THE MAIN ACTOR. CGImage and ImageData are not
+                    // Sendable, so creating them on a background thread and then handing them to the main
+                    // actor races their reference counts (an objc_release crash)
                     var importedCount = 0; // How many were successfully decoded & added this run
                     for (index, selectedURL) in selectedURLs.enumerated() {
-                        // Decode off the main thread (this Task isn't main-isolated)
-                        var decoded : ImageData? = nil;
-                        if let nsImage = NSImage(contentsOf: selectedURL),
-                           let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
-                        }
                         let processed = index + 1;
                         await MainActor.run {
-                            if let decoded {
+                            // CGImageSource (not NSImage) handles RAW (.ARW etc.) robustly and downsamples
+                            // during decode, so we never fully decode a huge original just to shrink it.
+                            if let cgImage = Self.decodedImage(at: selectedURL, maxPixelSize: max(canvasWidth, canvasHeight)) {
+                                let decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
                                 // Animate the append so the "Clear Imports" button's
                                 // transition plays when the first image arrives
                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
@@ -327,6 +326,29 @@ class ImageModel {
             return nil;
         }
         return (width, height);
+    }
+
+    /// Decodes an image file to a CGImage, downsampled so its largest dimension is at most maxPixelSize.
+    /// Uses CGImageSource rather than NSImage: it handles RAW formats (.ARW, etc.) more reliably and
+    /// generates a scaled-down image directly, avoiding a full-resolution decode of large originals.
+    /// - Parameters:
+    ///     - url: the image file to decode
+    ///     - maxPixelSize: cap for the largest output dimension (aspect ratio preserved)
+    /// - Returns: a decoded CGImage, or nil if the file couldn't be read
+    private static func decodedImage(at url: URL, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil;
+        }
+        let options : [CFString: Any] = [
+            // Prefer the file's embedded preview; only fall back to decoding the full image if there isn't one.
+            // This avoids forcing a full RAW demosaic (kCGImageSourceCreateThumbnailFromImageAlways), which is
+            // slow and can crash inside ImageIO's RAW decoder for some formats (e.g. .ARW). RAW files ship a
+            // baked-in JPEG preview, which is more than enough for a downsampled similarity comparison
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,  // downsample so the largest side is at most this
+            kCGImageSourceCreateThumbnailWithTransform: true    // apply EXIF orientation so pixels match how it displays
+        ];
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary);
     }
 
     func clearImages(_ status : AppStatusModel) {

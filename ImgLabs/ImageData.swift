@@ -72,8 +72,12 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
     /// - Returns: Void
     private func ingestImage(imgToIngest : CGImage, targetWidth : Int, targetHeight : Int) -> () {
         // The canvas dimensions drive the buffer, so the image is scaled to these regardless of its own size
-        let bitsPerComponent: Int = imgToIngest.bitsPerComponent; // Indicates how many bytes are used per pixel (typically 4, one for R, G, B, A channels)
-        let bytesPerPixel: Int = bitsPerComponent / 8 * ImageData.NUM_OF_VALUES_IN_PIXEL;
+        // Always normalise to 8 bits per channel, NOT the source's bit depth. RAW files (e.g. Sony .ARW)
+        // decode to 16-bit CGImages; a 16 bpc + premultipliedLast + DeviceRGB context is an unsupported
+        // combination (CGContext creation fails), and the rest of the pipeline assumes 8-bit RGBA. Drawing
+        // into an 8-bit context down-converts whatever the source format is into the buffer we expect.
+        let bitsPerComponent: Int = 8;
+        let bytesPerPixel: Int = bitsPerComponent / 8 * ImageData.NUM_OF_VALUES_IN_PIXEL; // = 4 (RGBA, one byte each)
         // Tightly pack the rows for the target width (no source row padding, since this is our own buffer)
         let bytesPerRow: Int = targetWidth * bytesPerPixel;
 
