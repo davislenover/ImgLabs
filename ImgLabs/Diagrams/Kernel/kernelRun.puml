@@ -1,0 +1,37 @@
+@startuml
+
+' What happens when a single batch of kernels is run through the engine
+' The factory allocates device buffers and builds the kernel; MetalRunner encodes
+' every kernel onto one command buffer, dispatches to the GPU, then fans the finished
+' results back out to any subscribed observers
+
+title Kernel Engine — Running a Batch
+
+skinparam shadowing false
+
+actor Caller
+participant "Factory\n(ComputeKernelCreatable)" as Factory
+participant "ComputeKernel" as Kernel
+participant "MetalRunner\n(actor)" as Runner
+participant "GPU" as GPU
+participant "ResultObserver" as Observer
+
+Caller -> Factory : createKernel(bufable, context)
+activate Factory
+Factory -> Factory : allocate MTLBuffers\n(via BufferCache when shared)
+Factory --> Caller : ComputeKernel
+deactivate Factory
+
+Caller -> Kernel : addObserver(observer)
+Caller -> Runner : runCompute(context, [kernels])
+activate Runner
+Runner -> Kernel : encode()
+Runner -> GPU : commit command buffer
+activate GPU
+GPU --> Runner : completed handler
+deactivate GPU
+Runner -> Kernel : notifyObservers()
+Kernel -> Observer : update(with: result)
+deactivate Runner
+
+@enduml

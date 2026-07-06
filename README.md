@@ -1,21 +1,23 @@
 # ImgLabs
 
-**GPU-accelerated image analysis for macOS — built on Swift, SwiftUI, and Metal.**
+**A GPU-accelerated duplicate-image finder for macOS — built on Swift, SwiftUI, and Metal.**
 
-ImgLabs measures how visually similar images are to one another using **Zero-Normalized Cross-Correlation (ZNCC)**, running the entire numerical pipeline — grayscale conversion, statistics, and correlation — as compute shaders on the GPU. Comparing two 12-megapixel images means tens of millions of floating-point operations; ImgLabs pushes that work off the CPU and onto Metal, where it runs in parallel across thousands of GPU threads.
+ImgLabs finds duplicate and near-duplicate images. It scores every pair of imported images with **Zero-Normalized Cross-Correlation (ZNCC)** then clusters the matches so near-identical shots can be reviewed and thinned down to a single keeper. The entire numerical pipeline runs as compute shaders on the GPU: comparing two 12-megapixel images is tens of millions of floating-point operations, and ImgLabs pushes that work off the CPU onto Metal, where it runs in parallel across thousands of threads.
 
 Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for authoring, batching, and dispatching Metal compute kernels with strongly-typed, `async`/`await`-friendly results. The engine is deliberately decoupled from ImgLabs itself and can be dropped into any Metal project that needs a clean abstraction over raw GPU plumbing.
 
-> **Status:** Active development. The compute pipeline (ZNCC, similarity matrices) is functional and tested; the SwiftUI front-end is being wired up to visualize results.
+> **Status:** Usable end to end — import images, press **Analyze**, and review the duplicate clusters with an adjustable sensitivity threshold. Active development continues on additional operations and UI polish.
 
 ---
 
 ## Highlights
 
-- **End-to-end GPU pipeline** — every stage of ZNCC (grayscale, mean, mean-subtraction, squaring, summation, dot product) runs as a Metal kernel. No per-pixel work happens on the CPU.
-- **Batched dispatch** — independent kernels are encoded onto a single command buffer and submitted together, minimizing GPU round-trips (e.g. both images in a pair are grayscaled in one pass).
+- **Duplicate detection** — imported images are scored pairwise, clustered with union-find, and grouped into keep/remove sets, with one representative image (the medoid) kept per cluster.
+- **Interactive sensitivity** — a threshold slider re-clusters the results live, trading precision for recall without recomputing the similarity matrix.
+- **GPU-accelerated ZNCC** — every stage (grayscale, mean, mean-subtraction, squaring, summation, dot product) runs as a Metal kernel. No per-pixel work happens on the CPU.
+- **Upload-once buffer cache** — source pixel data reused across the all-pairs matrix is uploaded to the GPU a single time via a reference-identity `BufferCache` actor, instead of once per comparison.
 - **Structured concurrency** — Metal objects aren't uniformly thread-safe, so the engine leans on Swift `actor`s to serialize access, caches compiled pipeline states, and confines command encoding to a single thread across `await` boundaries.
-- **A reusable framework** — the Kernel Engine exposes a small set of protocols (`ComputeKernel`, `ComputeKernelCreatable`, `MTBufable`, `ResultObserver`) that make adding a new GPU operation possible without touching the scheduler.
+- **A reusable framework** — the Kernel Engine exposes a focused set of protocols (`ComputeKernel`, `ComputeKernelCreatable`, `MTBufable`, `ResultObserver`) that make adding a new GPU operation possible without touching the scheduler.
 
 ## Requirements
 
@@ -29,17 +31,27 @@ Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for
 open ImgLabs.xcodeproj
 ```
 
-Build and run the `ImgLabs` scheme (⌘R), then import images from the native macOS file picker.
+Build and run the `ImgLabs` scheme (⌘R), import images from the native macOS file picker, then press **Analyze**. Adjust the **Sensitivity** slider to control how aggressively near-duplicates are grouped.
 
 ---
 
 ## How it works
 
-ImgLabs is organized into three layers, each with a clear responsibility:
+ImgLabs is organized into layers, each depending only on the one beneath it: the UI drives image compute, which composes GPU work through the Kernel Engine, which dispatches the raw Metal shader functions.
 
-```
-SwiftUI UI  ──►  Image Compute (ImageCorrelation)  ──►  Kernel Engine  ──►  Metal Shaders (.metal)
-```
+![ImgLabs high-level layers](ImgLabs/Diagrams/Architecture/layers.png)
+
+*Source: [`layers.puml`](ImgLabs/Diagrams/Architecture/layers.puml).*
+
+### From import to duplicates
+
+A run flows from imported files to reviewable duplicate groups. Because imported images can differ in size, they're first resampled onto a common canvas (the smallest width/height across the set) so the pixel-wise correlation compares equal-length arrays. The GPU then builds an all-pairs similarity matrix — computing only the lower triangle, since ZNCC is symmetric — which is clustered on the CPU into duplicate groups.
+
+![Duplicate detection pipeline](ImgLabs/Diagrams/Pipeline/duplicatePipeline.png)
+
+*Source: [`duplicatePipeline.puml`](ImgLabs/Diagrams/Pipeline/duplicatePipeline.puml).*
+
+Clustering uses a **union-find** (disjoint-set) structure: every image pair scoring at or above the threshold is connected, and connected images collapse into a single group (`DuplicateFinder.swift`). For each group, ImgLabs keeps the **medoid** — the image with the highest average similarity to the rest of its cluster — and flags the others for removal. The threshold is a live control, so re-clustering is instant and never re-runs the GPU work.
 
 ### The algorithm: ZNCC
 
@@ -63,6 +75,7 @@ The engine separates *what* a kernel computes from *how* it is scheduled on the 
 | `ComputeKernel` | `protocol` | Describes one kernel: its Metal function name and an `encode()` closure that binds buffers and configures thread dispatch. Is itself observable. |
 | `ComputeKernelCreatable` | `protocol` | A factory that allocates the required `MTLBuffer`s and instantiates a `ComputeKernel`. |
 | `MetalRunner` | `actor` | Batches kernels onto one command buffer, dispatches to the GPU, `await`s completion, then notifies observers. |
+| `BufferCache` | `actor` | Caches the `MTLBuffer` produced for each source, keyed by reference identity, so data reused across many kernels is uploaded to the device only once. |
 | `MTBufable` | `protocol` | Anything that can turn itself into an `MTLBuffer` — an `ImageData`, or an intermediate result array feeding the next stage. |
 | `ObservableResult` / `ResultObserver` / `ObserverStore` | `protocol` / `actor` | A typed, `async` observer pattern for pulling results back off the GPU once a run completes. |
 
@@ -75,21 +88,21 @@ The engine separates *what* a kernel computes from *how* it is scheduled on the 
 
 **Kernels.** High-level Swift wrappers in `HLShaders/` — `GrayScaleConvert`, `MeanValue`, `DotProduct`, `Subtraction` — pair with the raw Metal functions in `ComputeShaders/` (`ImgMath.metal`, `ArrayMath.metal`).
 
-### Data flow for a single run
+### Running a batch of kernels
 
-```
-ImageData ──(MTBufable)──► Factory allocates buffers ──► ComputeKernel
-                                                             │
-       MetalRunner.runCompute([kernels]) ──► GPU dispatch ──┘
-                                                             │
-       commandBuffer completes ──► kernel.notifyObservers() ──► ResultObserver.update(with:)
-```
+A factory allocates the device buffers and builds each kernel; `MetalRunner` encodes the whole batch onto one command buffer, dispatches it, and fans the finished results back out to any subscribed observers.
 
-### Architecture diagram
+![Running a batch of kernels](ImgLabs/Diagrams/Kernel/kernelRun.png)
+
+*Source: [`kernelRun.puml`](ImgLabs/Diagrams/Kernel/kernelRun.puml).*
+
+### Kernel Engine class diagram
+
+The protocols and actors that make up the engine, and how they relate:
 
 ![Kernel Engine architecture](ImgLabs/Diagrams/Kernel/kernelSubsystem.png)
 
-*The protocols and actors that make up the Kernel Engine, and how they relate. Source: [`kernelSubsystem.puml`](ImgLabs/Diagrams/Kernel/kernelSubsystem.puml).*
+*Source: [`kernelSubsystem.puml`](ImgLabs/Diagrams/Kernel/kernelSubsystem.puml).*
 
 ---
 
@@ -98,16 +111,18 @@ ImageData ──(MTBufable)──► Factory allocates buffers ──► Compute
 ```
 ImgLabs/
 ├── ImgLabsApp.swift             App entry point
-├── ContentView.swift            SwiftUI UI + ImageModel
-├── ImageData.swift              Wraps a CGImage, exposes raw RGBA pixels as an MTLBuffer
+├── ContentView.swift            SwiftUI UI, app-state models, import/analyze flow
+├── DuplicateView.swift          Renders duplicate clusters + the sensitivity slider
+├── ImageData.swift              Wraps a CGImage; resamples to a canvas; exposes RGBA as an MTLBuffer
 ├── ImageError.swift             Image-related error types
 ├── ImageCompute/
-│   └── ImageCorrelation.swift   ZNCC similarity + similarity matrix
+│   ├── ImageCorrelation.swift   ZNCC similarity + all-pairs similarity matrix
+│   └── DuplicateFinder.swift    Union-find clustering + medoid keeper selection
 ├── KernelEngine/
-│   ├── HLObjects/               Core engine: context, runner, protocols, observers
+│   ├── HLObjects/               Core engine: context, runner, buffer cache, protocols, observers
 │   ├── HLShaders/               Swift kernel wrappers (grayscale, mean, dot, subtraction)
 │   └── ComputeShaders/          Raw Metal (.metal) kernel functions
-└── Diagrams/                    Architecture diagrams (PlantUML)
+└── Diagrams/                    Architecture & pipeline diagrams (PlantUML)
 ```
 
 ## Adding a new GPU operation

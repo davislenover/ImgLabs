@@ -1,0 +1,25 @@
+@startuml
+
+' The end-to-end flow that turns a folder of images into reviewable duplicate groups
+' The per-pair ZNCC score is computed on the GPU; the clustering and keeper selection
+' run on the CPU over the resulting similarity matrix
+
+title ImgLabs — Duplicate Detection Pipeline
+
+skinparam shadowing false
+
+start
+:Import images;
+:Resample to a common canvas\n(min width & height across the set);
+:Build the similarity matrix\n(all pairs, lower triangle only — ZNCC is symmetric);
+note right
+  Each pair is scored on the GPU:
+  grayscale -> mean -> subtract-mean ->
+  square -> sum -> dot product
+end note
+:Cluster with Union-Find\n(connect every pair scoring >= threshold);
+:Choose one keeper per cluster\n(medoid: highest average similarity);
+:Render duplicate groups\n(DuplicateView, keep vs. remove);
+stop
+
+@enduml

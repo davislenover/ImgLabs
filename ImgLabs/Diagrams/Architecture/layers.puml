@@ -1,0 +1,21 @@
+@startuml
+
+' High-level layering of ImgLabs: each layer depends only on the one beneath it
+' UI drives image compute, which composes GPU work through the Kernel Engine,
+' which ultimately dispatches the raw Metal shader functions
+
+title ImgLabs — High-Level Layers
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+component "SwiftUI UI\n(ContentView, DuplicateView)" as UI
+component "Image Compute\n(ImageCorrelation, DuplicateFinder)" as Compute
+component "Kernel Engine\n(MetalComputeContext, MetalRunner)" as Engine
+component "Metal Shaders\n(ImgMath.metal, ArrayMath.metal)" as Shaders
+
+UI --> Compute : import / analyze
+Compute --> Engine : build & run kernels
+Engine --> Shaders : dispatch on GPU
+
+@enduml
