@@ -2,11 +2,15 @@
 
 **A GPU-accelerated duplicate-image finder for macOS — built on Swift, SwiftUI, and Metal.**
 
-ImgLabs finds duplicate and near-duplicate images. It scores every pair of imported images with **Zero-Normalized Cross-Correlation (ZNCC)** then clusters the matches so near-identical shots can be reviewed and thinned down to a single keeper. The entire numerical pipeline runs as compute shaders on the GPU: comparing two 12-megapixel images is tens of millions of floating-point operations, and ImgLabs pushes that work off the CPU onto Metal, where it runs in parallel across thousands of threads.
+ImgLabs finds duplicate and near-duplicate images. It scores every pair of imported images with **Zero-Normalized Cross-Correlation (ZNCC)** then clusters the matches so near-identical shots can be reviewed and thinned down to a single keeper. The entire numerical pipeline runs as compute shaders on the GPU: comparing two 12-megapixel images is a lot of floating-point operations, ImgLabs pushes that work off the CPU onto Metal, where it runs in parallel across thousands of threads.
 
 Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for authoring, batching, and dispatching Metal compute kernels with strongly-typed, `async`/`await`-friendly results. The engine is deliberately decoupled from ImgLabs itself and can be dropped into any Metal project that needs a clean abstraction over raw GPU plumbing.
 
-> **Status:** Usable end to end — import images, press **Analyze**, and review the duplicate clusters with an adjustable sensitivity threshold. Active development continues on additional operations and UI polish.
+> **Status:** Usable end to end — import images, press **Analyze**, review the duplicate clusters with an adjustable sensitivity threshold, and export the keepers. Active development continues on additional operations and UI polish.
+
+![ImgLabs finding duplicate images](ImgLabs/Images/Screenshot1.png)
+
+*Duplicate groups on the left (green = keep, red = flagged with its similarity to the keeper); import/analyze controls, status, and the memory-vs-accuracy Max Canvas Size option on the right.*
 
 ---
 
@@ -14,6 +18,8 @@ Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for
 
 - **Duplicate detection** — imported images are scored pairwise, clustered with union-find, and grouped into keep/remove sets, with one representative image (the medoid) kept per cluster.
 - **Interactive sensitivity** — a threshold slider re-clusters the results live, trading precision for recall without recomputing the similarity matrix.
+- **One-click export** — copies each cluster's keeper plus every image that belongs to no cluster into a chosen folder, leaving the flagged duplicates behind (with automatic filename de-duplication).
+- **Bounded memory** — a Max Canvas Size control caps the comparison resolution (512–2048 px per side), so per-image memory stays fixed regardless of how large the originals (e.g. RAW) are.
 - **GPU-accelerated ZNCC** — every stage (grayscale, mean, mean-subtraction, squaring, summation, dot product) runs as a Metal kernel. No per-pixel work happens on the CPU.
 - **Upload-once buffer cache** — source pixel data reused across the all-pairs matrix is uploaded to the GPU a single time via a reference-identity `BufferCache` actor, instead of once per comparison.
 - **Structured concurrency** — Metal objects aren't uniformly thread-safe, so the engine leans on Swift `actor`s to serialize access, caches compiled pipeline states, and confines command encoding to a single thread across `await` boundaries.
@@ -21,9 +27,8 @@ Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for
 
 ## Requirements
 
-- macOS with a Metal-capable GPU
-- Xcode (uses recent SwiftUI APIs, including the Liquid Glass `glassEffect` material)
-- Swift concurrency (`actor` / `async`/`await`)
+- **macOS 26.2 (Tahoe) or later**, on a Metal-capable Mac
+- **Xcode 26 or later** to build (Swift language mode 5 or later).
 
 ## Building & running
 
@@ -45,13 +50,15 @@ ImgLabs is organized into layers, each depending only on the one beneath it: the
 
 ### From import to duplicates
 
-A run flows from imported files to reviewable duplicate groups. Because imported images can differ in size, they're first resampled onto a common canvas (the smallest width/height across the set) so the pixel-wise correlation compares equal-length arrays. The GPU then builds an all-pairs similarity matrix — computing only the lower triangle, since ZNCC is symmetric — which is clustered on the CPU into duplicate groups.
+A run flows from imported files to reviewable duplicate groups. Because imported images can differ in size, they're first resampled onto a common canvas — the smaller of the set's minimum dimensions or a user-set **Max Canvas Size** cap (512–2048 px per side) — so the pixel-wise correlation compares equal-length arrays while keeping per-image memory bounded regardless of the originals' resolution. The GPU then builds an all-pairs similarity matrix — computing only the lower triangle, since ZNCC is symmetric — which is clustered on the CPU into duplicate groups.
 
 ![Duplicate detection pipeline](ImgLabs/Diagrams/Pipeline/duplicatePipeline.png)
 
 *Source: [`duplicatePipeline.puml`](ImgLabs/Diagrams/Pipeline/duplicatePipeline.puml).*
 
 Clustering uses a **union-find** (disjoint-set) structure: every image pair scoring at or above the threshold is connected, and connected images collapse into a single group (`DuplicateFinder.swift`). For each group, ImgLabs keeps the **medoid** — the image with the highest average similarity to the rest of its cluster — and flags the others for removal. The threshold is a live control, so re-clustering is instant and never re-runs the GPU work.
+
+Reviewed results can be exported: **Export** copies every kept image — each cluster's keeper plus all images that belong to no cluster — into a chosen folder, skipping the flagged duplicates. Copies happen off the main thread, filename collisions are resolved automatically (`photo-1.jpg`), and one unreadable source is recorded and skipped rather than aborting the run.
 
 ### The algorithm: ZNCC
 
@@ -112,7 +119,7 @@ The protocols and actors that make up the engine, and how they relate:
 ImgLabs/
 ├── ImgLabsApp.swift             App entry point
 ├── ContentView.swift            SwiftUI UI, app-state models, import/analyze flow
-├── DuplicateView.swift          Renders duplicate clusters + the sensitivity slider
+├── DuplicateView.swift          Duplicate-cluster UI, sensitivity slider, and keeper export
 ├── ImageData.swift              Wraps a CGImage; resamples to a canvas; exposes RGBA as an MTLBuffer
 ├── ImageError.swift             Image-related error types
 ├── ImageCompute/

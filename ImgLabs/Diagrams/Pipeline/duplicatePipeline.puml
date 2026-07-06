@@ -10,7 +10,7 @@ skinparam shadowing false
 
 start
 :Import images;
-:Resample to a common canvas\n(min width & height across the set);
+:Resample to a common canvas\n(smaller of the set minimum or the Max Canvas Size cap);
 :Build the similarity matrix\n(all pairs, lower triangle only — ZNCC is symmetric);
 note right
   Each pair is scored on the GPU:
@@ -20,6 +20,7 @@ end note
 :Cluster with Union-Find\n(connect every pair scoring >= threshold);
 :Choose one keeper per cluster\n(medoid: highest average similarity);
 :Render duplicate groups\n(DuplicateView, keep vs. remove);
+:Export keepers to a folder\n(cluster keepers + images in no cluster);
 stop
 
 @enduml
