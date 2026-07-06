@@ -103,6 +103,8 @@ class ImageCorrelation {
     ///     - images: The images in an array to compare
     /// - Returns: A matrix of floating point values, denoting how simillar image on row y to image on column x is (from 0 to 1, higher values being more simillar)
     func similarityMatrix(images: [ImageData]) async throws -> [[Float]] {
+        // Nothing to compare -- return an empty matrix (mirrors the old per-pair loop, which produced none)
+        guard !images.isEmpty else { return []; }
         // First compute the grayscale of every image
         var grayScaleKernels : [ComputeKernel] = [];
         var grayScaleImages : [FloatArrayResult] = [];
@@ -175,37 +177,28 @@ class ImageCorrelation {
             sumPow2.append(meanPow2.result * Float(grayScaleSubtractPow2Arrays[index].result.count));
         }
        
-        // Compute the dot product of each non power of two subtraction from mean results with each other result
-        // Since the dot of image[0]/image[1] is the same as image[1][0] avoid those repeat computations
-        let dotProductFactory : DotProductFactory = DotProductFactory();
-        var dotProductResults : [[FloatValueResult]] = [];
-        var dotProductKernels : [ComputeKernel] = [];
-        for (index,imgOneSubArray) in grayScaleSubtractArrays.enumerated() {
-            // Compute dot product of image 0...index
-            var dotProductResultsForIndex : [FloatValueResult] = [];
-            for dotProd2Index in 0...index {
-                let dotProduct : FloatValueResult = FloatValueResult();
-                dotProductFactory.setArr2(bufable: grayScaleSubtractArrays[dotProd2Index]);
-                let dotProductKernel : ComputeKernel = try await dotProductFactory.createKernel(bufable: imgOneSubArray, context: self.computeContext);
-                await dotProductKernel.addObserver(dotProduct);
-                dotProductKernels.append(dotProductKernel);
-                dotProductResultsForIndex.append(dotProduct);
-            }
-            dotProductResults.append(dotProductResultsForIndex);
-        }
-        try await MetalRunner.runCompute(from: self.computeContext, for: dotProductKernels);
-        
+        // Compute every pairwise dot product in a single batched dispatch instead of separate
+        // DotProduct kernels. The factory assembles the mean-centered arrays into one strided device buffer;
+        // the batched kernel reduces each lower-triangle pair (row, col), returning one [Float] of results
+        let imageCount : Int = grayScaleSubtractArrays.count;
+        let dotProductFactory : BatchedDotProductFactory = BatchedDotProductFactory();
+        dotProductFactory.setImageArrays(grayScaleSubtractArrays);
+        let dotProductKernel : ComputeKernel = try await dotProductFactory.createKernel(bufable: grayScaleSubtractArrays[0], context: self.computeContext);
+        let dotProductResults : FloatArrayResult = FloatArrayResult();
+        await dotProductKernel.addObserver(dotProductResults);
+        try await MetalRunner.runCompute(from: self.computeContext, for: [dotProductKernel]);
+
         // Populate results into a full square matrix
         // Only the lower triangle (including the diagonal) was computed, so mirror each value across
         // the diagonal since ZNCC is symmetric (zncc(i,j) == zncc(j,i))
-        let matrixSize : Int = dotProductResults.count;
-        var znccResults : [[Float]] = Array(repeating: Array(repeating: Float(0), count: matrixSize), count: matrixSize);
-
-        for (img1Idx,dotProdResultsForImage) in dotProductResults.enumerated() {
-            for (img2Idx,dotProdResult) in dotProdResultsForImage.enumerated() {
-                let zncc : Float = dotProdResult.result / (sumPow2[img1Idx] * sumPow2[img2Idx]).squareRoot();
-                znccResults[img1Idx][img2Idx] = zncc;
-                znccResults[img2Idx][img1Idx] = zncc; // Mirror across the diagonal (no-op when img1Idx == img2Idx)
+        let dotProducts : [Float] = dotProductResults.result;
+        var znccResults : [[Float]] = Array(repeating: Array(repeating: Float(0), count: imageCount), count: imageCount);
+        for row in 0..<imageCount {
+            for col in 0...row {
+                let dot : Float = dotProducts[BatchedDotProductFactory.pairIndex(row: row, col: col)];
+                let zncc : Float = dot / (sumPow2[row] * sumPow2[col]).squareRoot();
+                znccResults[row][col] = zncc;
+                znccResults[col][row] = zncc; // Mirror across the diagonal (no-op when row == col)
             }
         }
         return znccResults;
@@ -236,6 +229,6 @@ class ImageCorrelation {
             self.result = with;
         }
     }
-    
+
 }
 

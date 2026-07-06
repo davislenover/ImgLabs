@@ -491,6 +491,28 @@ struct ControlSideBar : View {
             Text("Max Canvas Size (Higher -> Higher Memory Usage/More Accurate Results): \(self.maxCanvasDim.formatted(.number.precision(.fractionLength(0...2))))");
             Slider(value: $maxCanvasDim, in: 512...2048, step: 128)
                 .disabled(status.isBusy);
+            // TEMP (remove before release): runs the GPU-vs-CPU ZNCC benchmark and prints a report to the
+            // Xcode console. Uses synthetic images sized to the current Max Canvas Size, so it needs no imports
+            Button("Run GPU vs CPU Benchmark") {
+                let canvas = Int(self.maxCanvasDim);
+                // Prefer the user's imported photos; fall back to synthetic images only if fewer than two
+                // are imported, so the button always does something
+                let imported = model.images;
+                status.setStatusMessage("Benchmarking...");
+                Task.detached {
+                    let images = imported.count >= 2 ? imported
+                                                     : PerformanceBenchmark.syntheticImages(count: 20, canvas: canvas);
+                    guard let ctx = MetalComputeContext(),
+                          let result = await PerformanceBenchmark.run(images: images, context: ctx) else {
+                        await MainActor.run { status.setStatusMessage("Benchmark failed"); }
+                        return;
+                    }
+                    print(result.report);
+                    await MainActor.run { status.setStatusMessage(result.summary); }
+                }
+            }
+            .padding(.top, 8)
+            .disabled(status.isBusy);
             Spacer();
         }
         .padding()
