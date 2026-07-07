@@ -1,6 +1,6 @@
 # ImgLabs
 
-**Perceptual duplicate-photo detection on the GPU — a native macOS app powered by a Metal compute engine.**
+**GPU-accelerated perceptual duplicate-photo detection — a native macOS app powered by a Metal compute engine**
 
 ImgLabs finds duplicate and near-duplicate images. It scores every pair of imported images with **Zero-Normalized Cross-Correlation (ZNCC)** then clusters the matches so near-identical shots can be reviewed and thinned down to a single keeper. The entire numerical pipeline runs as compute shaders on the GPU: comparing two 12-megapixel images is a lot of floating-point operations, ImgLabs pushes that work off the CPU onto Metal, where it runs in parallel across thousands of threads.
 
@@ -44,7 +44,7 @@ See **[Docs/Benchmarks.md](Docs/Benchmarks.md)** for the full methodology, the c
 ## Requirements
 
 - **macOS 26.2 (Tahoe) or later**, on a Metal-capable Mac
-- **Xcode 26 or later** to build (Swift language mode 5 or later).
+- **Xcode 26 or later** to build (Swift language mode 5 or later)
 
 ## Building & Running
 
