@@ -113,3 +113,51 @@ kernel void dotArr(
         metal::atomic_fetch_add_explicit(result, localSharedMem[0], metal::memory_order::memory_order_relaxed);
     }
 }
+
+/*
+ Computes many dot products in a single dispatch: one threadgroup per pair.
+ `data` holds the arrays for every image back-to-back, so image k occupies the range
+ data[k*elemsPerImage ... (k+1)*elemsPerImage - 1]. `pairs` lists the (i,j) image indices to correlate,
+ one entry per threadgroup. Each threadgroup reduces the dot product of images i and j and writes the single
+ result to results[groupId]. No atomics are needed, every threadgroup owns a distinct output
+ slot, so there is no cross-group contention
+ groupSize (threads per threadgroup) should be a power of two (for the tree reduction) and as large as the
+ device allows to keep the reduction shallow. The number of threadgroups dispatched must equal the pair count
+ */
+kernel void batchedDotArr(
+    device const float* data           [[buffer(0)]], // Concatenated arrays for every image (imageCount * elemsPerImage floats)
+    constant uint2* pairs              [[buffer(1)]], // The (i, j) image indices to correlate, one per threadgroup
+    constant uint32_t& elemsPerImage   [[buffer(2)]], // Number of elements in each image's array
+    device float* results              [[buffer(3)]], // One dot product per pair, indexed by threadgroup id
+    threadgroup float* localSharedMem  [[threadgroup(0)]], // Shared memory allocation per thread group
+    uint32_t groupId                   [[threadgroup_position_in_grid]],
+    uint32_t localId                   [[thread_position_in_threadgroup]],
+    uint32_t groupSize                 [[threads_per_threadgroup]])
+{
+    // This threadgroup is responsible for one pair; find where each image's array begins
+    uint2 pair = pairs[groupId];
+    uint32_t baseI = pair.x * elemsPerImage;
+    uint32_t baseJ = pair.y * elemsPerImage;
+
+    // Each thread strides through the arrays accumulating a partial dot product (handles arrays longer than
+    // the threadgroup by looping). Threads past the end contribute nothing since the loop simply won't run
+    float partial = 0.0f;
+    for (uint32_t idx = localId; idx < elemsPerImage; idx += groupSize) {
+        partial += data[baseI + idx] * data[baseJ + idx];
+    }
+    localSharedMem[localId] = partial;
+    threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+
+    // Tree-based reduction within the threadgroup (assumes groupSize is a power of two)
+    for (uint32_t stride = groupSize / 2; stride > 0; stride >>= 1) {
+        if (localId < stride) {
+            localSharedMem[localId] += localSharedMem[localId + stride];
+        }
+        threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+    }
+
+    // The first thread writes this pair's result; each group owns a distinct slot, so no atomics needed
+    if (localId == 0) {
+        results[groupId] = localSharedMem[0];
+    }
+}

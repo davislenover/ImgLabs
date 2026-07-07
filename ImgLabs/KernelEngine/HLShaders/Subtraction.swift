@@ -58,18 +58,15 @@ public actor Subtraction: ComputeKernel {
         }
     }
     
-    /// Observe for a [Float] value
+    /// Observe for a DeviceBuffer -- the subtraction output is published as a resident buffer, not a [Float]
     public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
-    
+
     public func notifyObservers() async {
-        // Get result
-        let rawPtr : UnsafeMutableRawPointer = self.result.contents();
-        let length : Int = self.result.length / MemoryLayout<Float>.stride;
-        let typedPointer = rawPtr.bindMemory(to: Float.self, capacity: length);
-        let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: length));
-        await self.observerStore.callAll(with: result);
+        // Publish the output as a resident DeviceBuffer rather than downloading it to a [Float], so the next
+        // stage reads it straight from the GPU (see DeviceBuffer) instead of a GPU->CPU->GPU round-trip
+        await self.observerStore.callAll(with: DeviceBuffer(self.result));
     }
 }
 

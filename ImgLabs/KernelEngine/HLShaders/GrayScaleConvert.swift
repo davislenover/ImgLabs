@@ -14,18 +14,15 @@ public actor GrayScaleConvert : ComputeKernel, Sendable {
     
     private let observerStore : ObserverStore = ObserverStore();
     
-    /// Observe for a [Float] type
+    /// Observe for a DeviceBuffer -- the grayscale output is published as a resident buffer
     public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
-    
+
     public func notifyObservers() async {
-        // Get result
-        let rawPtr : UnsafeMutableRawPointer = self.grayScaleBuf.contents();
-        let length : Int = self.grayScaleBuf.length / MemoryLayout<Float>.stride;
-        let typedPointer = rawPtr.bindMemory(to: Float.self, capacity: length);
-        let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: length));
-        await self.observerStore.callAll(with: result);
+        // Publish the grayscale output as a resident DeviceBuffer rather than downloading it to a [Float]. The
+        // next stage reads straight from this buffer on the GPU, avoiding a GPU->CPU->GPU round-trip per stage
+        await self.observerStore.callAll(with: DeviceBuffer(self.grayScaleBuf));
     }
 
     private nonisolated static let name : String = "convertToGrayScale"; // Matches the Metal definition

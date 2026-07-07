@@ -1,6 +1,6 @@
 # ImgLabs
 
-**GPU-accelerated perceptual duplicate-photo detection on macOS — built on Swift, SwiftUI, and Metal**
+**GPU-accelerated perceptual duplicate-photo detection — a native macOS app powered by a Metal compute engine**
 
 ImgLabs finds duplicate and near-duplicate images. It scores every pair of imported images with **Zero-Normalized Cross-Correlation (ZNCC)** then clusters the matches so near-identical shots can be reviewed and thinned down to a single keeper. The entire numerical pipeline runs as compute shaders on the GPU: comparing two 12-megapixel images is a lot of floating-point operations, ImgLabs pushes that work off the CPU onto Metal, where it runs in parallel across thousands of threads.
 
@@ -11,6 +11,22 @@ Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for
 ![ImgLabs finding duplicate images](ImgLabs/Images/Screenshot1.png)
 
 *Duplicate groups on the left (green = keep, red = flagged with its similarity to the keeper); import/analyze controls, status, and the memory-vs-accuracy Max Canvas Size option on the right.*
+
+---
+
+## Built for Volume
+
+ImgLabs is designed for **large image sets** — a photographer's full shoot, an ML training set, a stock archive. The similarity matrix is **all-pairs**, so the work grows as `O(N²)`: doubling the images roughly quadruples the comparisons. That is where offloading to the GPU boosts performance.
+
+A series of GPU-pipeline optimizations — batching the ~`N²` dot products into a single dispatch, keeping intermediate results resident on the GPU instead of round-tripping them to the CPU, and releasing them the moment they're spent:
+
+![GPU vs 14-core CPU at 2048px](Docs/benchmark_2048.svg)
+
+On an **M4 Pro** (14-core CPU, 20-core GPU, 48 GB), comparing **500 images at 2048×2048 px** the GPU finishes a warm run in ~18 s — **~1.4× faster than a fully parallel 14-core CPU** — while keeping peak memory (~43 GB) under RAM. The GPU overtakes the CPU from roughly 150 images; below that, dispatch overhead dominates and the CPU wins. In short: the more you throw at it, the more the GPU wins.
+
+**Where this matters:** event & wedding culling, sports and wildlife burst shooting, real-estate/product sets, ML dataset de-duplication, and stock or digital-asset archives.
+
+See **[Docs/Benchmarks.md](Docs/Benchmarks.md)** for the full methodology, the cold-vs-warm breakdown, the optimization journey, and results across 50–500 images at both canvas sizes.
 
 ---
 
@@ -30,7 +46,7 @@ Powering the app is the **Kernel Engine**: a reusable, thread-safe framework for
 - **macOS 26.2 (Tahoe) or later**, on a Metal-capable Mac
 - **Xcode 26 or later** to build (Swift language mode 5 or later)
 
-## Building & running
+## Building & Running
 
 ```sh
 open ImgLabs.xcodeproj
@@ -40,7 +56,7 @@ Build and run the `ImgLabs` scheme (⌘R), import images from the native macOS f
 
 ---
 
-## How it works
+## How it Works
 
 ImgLabs is organized into layers, each depending only on the one beneath it: the UI drives image compute, which composes GPU work through the Kernel Engine, which dispatches the raw Metal shader functions.
 
@@ -48,7 +64,7 @@ ImgLabs is organized into layers, each depending only on the one beneath it: the
 
 *Source: [`layers.puml`](ImgLabs/Diagrams/Architecture/layers.puml).*
 
-### From import to duplicates
+### From Import to Duplicates
 
 A run flows from imported files to reviewable duplicate groups. Because imported images can differ in size, they're first resampled onto a common canvas — the smaller of the set's minimum dimensions or a user-set **Max Canvas Size** cap (512–2048 px per side) — so the pixel-wise correlation compares equal-length arrays while keeping per-image memory bounded regardless of the originals' resolution. The GPU then builds an all-pairs similarity matrix — computing only the lower triangle, since ZNCC is symmetric — which is clustered on the CPU into duplicate groups.
 
@@ -60,7 +76,7 @@ Clustering uses a **union-find** (disjoint-set) structure: every image pair scor
 
 Reviewed results can be exported: **Export** copies every kept image — each cluster's keeper plus all images that belong to no cluster — into a chosen folder, skipping the flagged duplicates. Copies happen off the main thread, filename collisions are resolved automatically (`photo-1.jpg`), and one unreadable source is recorded and skipped rather than aborting the run.
 
-### The algorithm: ZNCC
+### The Algorithm: ZNCC
 
 Zero-Normalized Cross-Correlation is a lighting-invariant measure of similarity between two signals. For two images `A` and `B` it yields a value in `[-1, 1]`, where `1` means identical:
 
@@ -95,7 +111,7 @@ The engine separates *what* a kernel computes from *how* it is scheduled on the 
 
 **Kernels.** High-level Swift wrappers in `HLShaders/` — `GrayScaleConvert`, `MeanValue`, `DotProduct`, `Subtraction` — pair with the raw Metal functions in `ComputeShaders/` (`ImgMath.metal`, `ArrayMath.metal`).
 
-### Running a batch of kernels
+### Running a Batch of Kernels
 
 A factory allocates the device buffers and builds each kernel; `MetalRunner` encodes the whole batch onto one command buffer, dispatches it, and fans the finished results back out to any subscribed observers.
 
@@ -103,7 +119,7 @@ A factory allocates the device buffers and builds each kernel; `MetalRunner` enc
 
 *Source: [`kernelRun.puml`](ImgLabs/Diagrams/Kernel/kernelRun.puml).*
 
-### Kernel Engine class diagram
+### Kernel Engine Class Diagram
 
 The protocols and actors that make up the engine, and how they relate:
 
@@ -113,7 +129,7 @@ The protocols and actors that make up the engine, and how they relate:
 
 ---
 
-## Project layout
+## Project Layout
 
 ```
 ImgLabs/
@@ -132,7 +148,7 @@ ImgLabs/
 └── Diagrams/                    Architecture & pipeline diagrams (PlantUML)
 ```
 
-## Adding a new GPU operation
+## Adding a New GPU Operation
 
 The engine is built to be extended without modifying the scheduler:
 

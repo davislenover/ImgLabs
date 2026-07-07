@@ -124,6 +124,15 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
         return UInt32(imgCtx.width * imgCtx.height * 4);
     }
     
+    /// A copy of the raw premultiplied-RGBA bytes backing this image at its current canvas size
+    /// (four bytes per pixel: R, G, B, A). Used by the CPU reference in PerformanceBenchmark to score the
+    /// same pixels the GPU path uploads. Returns nil if the image has no pixel data
+    public func rawRGBA() -> [UInt8]? {
+        guard let pixData = self.pixelData, let ctx = self.imageContext else { return nil; }
+        let count = ctx.width * ctx.height * ImageData.NUM_OF_VALUES_IN_PIXEL;
+        return [UInt8](UnsafeBufferPointer(start: pixData, count: count));
+    }
+
     public func printRawData(_ pixelX: UInt32, _ pixelY: UInt32) {
         // Safely unwrap the optional pointer
         guard let buffer = self.pixelData else { return; }

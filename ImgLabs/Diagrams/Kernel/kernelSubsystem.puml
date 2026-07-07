@@ -21,7 +21,7 @@ interface ComputeKernel <<protocol>> {
     + {abstract} encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
 }
 
-note bottom of ComputeKernel
+note left of ComputeKernel
     Defines a class which knows how to encode a kernel shader given buffers and dispatch threads
     Has a corresponding factory class (ComputeKernelCreatable) which instanciates the class
     Is an ObservableResult which ResultObservers can subscribe to, to get the resulting value after running on device
@@ -32,7 +32,7 @@ interface ComputeKernelCreatable <<protocol>> {
     + {abstract} createKernel(bufable: MTBufable, context: MetalComputeContext) : ComputeKernel <<async>> <<throws>>
 }
 
-note bottom of ComputeKernelCreatable
+note right of ComputeKernelCreatable
     Defines a factory class for a corresponding ComputeKernel,
     Responsible for allocating buffer memory on device based on parameters given
 end note
@@ -76,9 +76,37 @@ class BufferCache <<actor>> {
     + buffer(for bufable: any MTBufable, device: MTLDevice) : MTLBuffer <<async>> <<throws>>
 }
 
-note left of BufferCache {
+note right of BufferCache {
     Used to store created MTLBuffers that are already in GPU memory which other objects may re-use
     Reduces memory usage
+}
+
+class DeviceBuffer <<MTBufable>> {
+    - buffer : MTLBuffer
+    + toMTLBuffer(_ device: MTLDevice) : MTLBuffer <<async>> <<throws>>
+    + MTLBufferSize() : UInt32 <<throws>>
+}
+
+note bottom of DeviceBuffer {
+    Wraps an MTLBuffer that already lives on the device; toMTLBuffer returns it with no copy.
+    Lets a kernel's output be fed straight into the next kernel as its input, so intermediate results
+    stay resident on the GPU instead of being downloaded to a [Float] and re-uploaded every stage.
+    Array-producing kernels (e.g. GrayScaleConvert, Subtraction) publish a DeviceBuffer to observers
+}
+
+class BatchedDotProduct <<ComputeKernel, Sendable>> {
+    - data : MTLBuffer
+    - pairs : MTLBuffer
+    - results : MTLBuffer
+}
+
+note bottom of BatchedDotProduct {
+    Computes every pairwise dot product in a single dispatch (one threadgroup per pair, no atomics),
+    replacing N*(N+1)/2 separate DotProduct kernels. Publishes one [Float] of results to observers
+}
+
+class BatchedDotProductFactory <<ComputeKernelCreatable, Sendable>> {
+    + setImageArrays(_ arrays: [MTBufable]) : Void
 }
 
 ComputeKernelCreatable .l.> ComputeKernel
@@ -89,6 +117,9 @@ GrayScaleConvert .u.|> ComputeKernel
 GrayScaleKernelFactory .u.|> ComputeKernelCreatable
 DotProductFactory .u.|> ComputeKernelCreatable
 DotProductFactory ..> BufferCache
+BatchedDotProduct .u.|> ComputeKernel
+BatchedDotProductFactory .u.|> ComputeKernelCreatable
+DeviceBuffer .u.|> MTBufable
 ImageData .u.|> MTBufable
 MetalRunner .l.> MetalComputeContext
 ObservableResult .l.> ResultObserver
