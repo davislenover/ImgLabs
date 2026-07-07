@@ -26,27 +26,27 @@ On an **M4 Pro** (14-core CPU, 20-core GPU, 48 GB), comparing **500 images at 20
 
 **Where this matters:** event & wedding culling, sports and wildlife burst shooting, real-estate/product sets, ML dataset de-duplication, and stock or digital-asset archives.
 
-📊 See **[Docs/Benchmarks.md](Docs/Benchmarks.md)** for the full methodology, the cold-vs-warm breakdown, the optimization journey, and results across 50–500 images at both canvas sizes.
+See **[Docs/Benchmarks.md](Docs/Benchmarks.md)** for the full methodology, the cold-vs-warm breakdown, the optimization journey, and results across 50–500 images at both canvas sizes.
 
 ---
 
 ## Highlights
 
-- **Duplicate detection** — imported images are scored pairwise, clustered with union-find, and grouped into keep/remove sets, with one representative image (the medoid) kept per cluster.
-- **Interactive sensitivity** — a threshold slider re-clusters the results live, trading precision for recall without recomputing the similarity matrix.
-- **One-click export** — copies each cluster's keeper plus every image that belongs to no cluster into a chosen folder, leaving the flagged duplicates behind (with automatic filename de-duplication).
-- **Bounded memory** — a Max Canvas Size control caps the comparison resolution (512–2048 px per side), so per-image memory stays fixed regardless of how large the originals (e.g. RAW) are.
-- **GPU-accelerated ZNCC** — every stage (grayscale, mean, mean-subtraction, squaring, summation, dot product) runs as a Metal kernel. No per-pixel work happens on the CPU.
-- **Upload-once buffer cache** — source pixel data reused across the all-pairs matrix is uploaded to the GPU a single time via a reference-identity `BufferCache` actor, instead of once per comparison.
-- **Structured concurrency** — Metal objects aren't uniformly thread-safe, so the engine leans on Swift `actor`s to serialize access, caches compiled pipeline states, and confines command encoding to a single thread across `await` boundaries.
-- **A reusable framework** — the Kernel Engine exposes a focused set of protocols (`ComputeKernel`, `ComputeKernelCreatable`, `MTBufable`, `ResultObserver`) that make adding a new GPU operation possible without touching the scheduler.
+- **Duplicate detection** — imported images are scored pairwise, clustered with union-find, and grouped into keep/remove sets, with one representative image (the medoid) kept per cluster
+- **Interactive sensitivity** — a threshold slider re-clusters the results live, trading precision for recall without recomputing the similarity matrix
+- **One-click export** — copies each cluster's keeper plus every image that belongs to no cluster into a chosen folder, leaving the flagged duplicates behind (with automatic filename de-duplication)
+- **Bounded memory** — a Max Canvas Size control caps the comparison resolution (512–2048 px per side), so per-image memory stays fixed regardless of how large the originals (e.g. RAW) are
+- **GPU-accelerated ZNCC** — every stage (grayscale, mean, mean-subtraction, squaring, summation, dot product) runs as a Metal kernel. No per-pixel work happens on the CPU
+- **Upload-once buffer cache** — source pixel data reused across the all-pairs matrix is uploaded to the GPU a single time via a reference-identity `BufferCache` actor, instead of once per comparison
+- **Structured concurrency** — Metal objects aren't uniformly thread-safe, so the engine leans on Swift `actor`s to serialize access, caches compiled pipeline states, and confines command encoding to a single thread across `await` boundaries
+- **A reusable framework** — the Kernel Engine exposes a focused set of protocols (`ComputeKernel`, `ComputeKernelCreatable`, `MTBufable`, `ResultObserver`) that make adding a new GPU operation possible without touching the scheduler
 
 ## Requirements
 
 - **macOS 26.2 (Tahoe) or later**, on a Metal-capable Mac
 - **Xcode 26 or later** to build (Swift language mode 5 or later).
 
-## Building & running
+## Building & Running
 
 ```sh
 open ImgLabs.xcodeproj
@@ -94,13 +94,13 @@ The engine separates *what* a kernel computes from *how* it is scheduled on the 
 
 | Type | Kind | Responsibility |
 | --- | --- | --- |
-| `MetalComputeContext` | `actor` | Owns the `MTLDevice`, command queue, and shader library. Caches compiled pipeline states (keyed by function name, compiled lazily via `Task`) and holds the kernel-factory registry. |
-| `ComputeKernel` | `protocol` | Describes one kernel: its Metal function name and an `encode()` closure that binds buffers and configures thread dispatch. Is itself observable. |
-| `ComputeKernelCreatable` | `protocol` | A factory that allocates the required `MTLBuffer`s and instantiates a `ComputeKernel`. |
-| `MetalRunner` | `actor` | Batches kernels onto one command buffer, dispatches to the GPU, `await`s completion, then notifies observers. |
-| `BufferCache` | `actor` | Caches the `MTLBuffer` produced for each source, keyed by reference identity, so data reused across many kernels is uploaded to the device only once. |
-| `MTBufable` | `protocol` | Anything that can turn itself into an `MTLBuffer` — an `ImageData`, or an intermediate result array feeding the next stage. |
-| `ObservableResult` / `ResultObserver` / `ObserverStore` | `protocol` / `actor` | A typed, `async` observer pattern for pulling results back off the GPU once a run completes. |
+| `MetalComputeContext` | `actor` | Owns the `MTLDevice`, command queue, and shader library. Caches compiled pipeline states (keyed by function name, compiled lazily via `Task`) and holds the kernel-factory registry |
+| `ComputeKernel` | `protocol` | Describes one kernel: its Metal function name and an `encode()` closure that binds buffers and configures thread dispatch. Is itself observable |
+| `ComputeKernelCreatable` | `protocol` | A factory that allocates the required `MTLBuffer`s and instantiates a `ComputeKernel` |
+| `MetalRunner` | `actor` | Batches kernels onto one command buffer, dispatches to the GPU, `await`s completion, then notifies observers |
+| `BufferCache` | `actor` | Caches the `MTLBuffer` produced for each source, keyed by reference identity, so data reused across many kernels is uploaded to the device only once |
+| `MTBufable` | `protocol` | Anything that can turn itself into an `MTLBuffer` — an `ImageData`, or an intermediate result array feeding the next stage |
+| `ObservableResult` / `ResultObserver` / `ObserverStore` | `protocol` / `actor` | A typed, `async` observer pattern for pulling results back off the GPU once a run completes |
 
 **Concurrency model.** Because Metal's mutable objects can't be freely shared across threads, the engine:
 

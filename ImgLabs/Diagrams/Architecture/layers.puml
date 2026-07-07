@@ -14,8 +14,8 @@ component "Image Compute\n(ImageCorrelation, DuplicateFinder)" as Compute
 component "Kernel Engine\n(MetalComputeContext, MetalRunner)" as Engine
 component "Metal Shaders\n(ImgMath.metal, ArrayMath.metal)" as Shaders
 
-UI --> Compute : import / analyze
-Compute --> Engine : build & run kernels
-Engine --> Shaders : dispatch on GPU
+UI --> Compute : Import / Analyze
+Compute --> Engine : Build & Run Kernels
+Engine --> Shaders : Dispatch on GPU
 
 @enduml

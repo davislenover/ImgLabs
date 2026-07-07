@@ -1,15 +1,15 @@
 <svg viewBox="0 0 960 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
   <rect x="0" y="0" width="960" height="470" fill="#ffffff"/>
-  <text x="480" y="26" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">ImgLabs ZNCC — GPU vs 14-core CPU @ 2048×2048 px (M4 Pro, after items 1–2)</text>
+  <text x="480" y="26" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">ImgLabs ZNCC — GPU vs 14-Core CPU @ 2048×2048 px (M4 Pro, After Items 1–2)</text>
 
   <!-- Legend -->
   <rect x="330" y="38" width="14" height="14" fill="#2f6fed"/>
-  <text x="350" y="50" font-size="12" fill="#374151">GPU (Metal, 20-core)</text>
+  <text x="350" y="50" font-size="12" fill="#374151">GPU (Metal, 20-Core)</text>
   <rect x="500" y="38" width="14" height="14" fill="#e8833a"/>
-  <text x="520" y="50" font-size="12" fill="#374151">CPU (14-core, best of 3)</text>
+  <text x="520" y="50" font-size="12" fill="#374151">CPU (14-Core, Best of 3)</text>
 
   <!-- ================= Panel A: Time ================= -->
-  <text x="265" y="76" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Warm compute time (s) · lower is better</text>
+  <text x="265" y="76" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Warm Compute Time (s) · Lower Is Better</text>
   <!-- gridlines + y ticks: 0,5,10,15,20,25 at 12.8 px/s, baseline y=380 -->
   <g stroke="#e5e7eb" stroke-width="1">
     <line x1="90" y1="380" x2="440" y2="380"/>
@@ -57,10 +57,10 @@
     <text x="309" y="396">300</text>
     <text x="396" y="396">500</text>
   </g>
-  <text x="265" y="416" text-anchor="middle" font-size="11" fill="#6b7280">images compared (all-pairs)</text>
+  <text x="265" y="416" text-anchor="middle" font-size="11" fill="#6b7280">Images Compared (All-Pairs)</text>
 
   <!-- ================= Panel B: Memory ================= -->
-  <text x="735" y="76" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Peak memory (GB) · lower is better</text>
+  <text x="735" y="76" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Peak Memory (GB) · Lower Is Better</text>
   <!-- gridlines + y ticks: 0,12,24,36,48 at 6.667 px/GB -->
   <g stroke="#e5e7eb" stroke-width="1">
     <line x1="560" y1="380" x2="910" y2="380"/>
@@ -75,7 +75,7 @@
     <text x="554" y="144">36</text>
   </g>
   <line x1="560" y1="60" x2="910" y2="60" stroke="#d64545" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <text x="906" y="55" text-anchor="end" font-size="10" font-weight="600" fill="#d64545">48 GB unified RAM</text>
+  <text x="906" y="55" text-anchor="end" font-size="10" font-weight="600" fill="#d64545">48 GB Unified RAM</text>
   <line x1="560" y1="60" x2="560" y2="380" stroke="#9ca3af" stroke-width="1"/>
 
   <!-- GPU bars -->
@@ -104,7 +104,7 @@
     <text x="779" y="396">300</text>
     <text x="866" y="396">500</text>
   </g>
-  <text x="735" y="416" text-anchor="middle" font-size="11" fill="#6b7280">images compared (all-pairs)</text>
+  <text x="735" y="416" text-anchor="middle" font-size="11" fill="#6b7280">Images Compared (All-Pairs)</text>
 
   <!-- Takeaway strip -->
   <text x="480" y="444" text-anchor="middle" font-size="12" fill="#111827">GPU overtakes the 14-core CPU from ~150 images, and its peak memory stays under RAM through 500 images (~43 GB).</text>

@@ -13,7 +13,7 @@ How the GPU similarity-matrix pipeline performs against a CPU reference, and how
 | Test images | Sony **ARW RAW** files from a high-resolution camera — real pro-camera output (not synthetic), so this reflects a demanding, above-average real-world import |
 | Baselines | Same computation on a single-threaded CPU reference and a 14-thread (`DispatchQueue.concurrentPerform`) reference |
 
-> Numbers are single-machine, best-of-3. "Warm" = pipeline states already compiled; "cold" = first run including compilation and setup.
+> Numbers are single-machine. **Best-of-3** means each reported timing is the *fastest* of three repeated runs — the fastest run is the one least disturbed by background activity and scheduler jitter, so it best reflects the actual compute (the slower runs only add noise, not signal). "Warm" = pipeline states already compiled; "Cold" = first run including compilation and setup.
 >
 > The RAW files are decoded and resampled to the canvas size before comparison, so the *compute* time and memory scale with the canvas, not the full-resolution source — but using genuine high-res RAW makes this a heavier-than-typical set (large decode + import) rather than a toy benchmark.
 
