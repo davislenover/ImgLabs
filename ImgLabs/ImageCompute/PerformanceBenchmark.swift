@@ -3,11 +3,10 @@
 //  ImgLabs
 //
 //  Created by Davis Lenover on 2026-07-06.
-//  A quick GPU-vs-CPU comparison for the ZNCC similarity matrix. Runs the exact same all-pairs computation on
+//  A GPU-vs-CPU comparison for the ZNCC similarity matrix. Runs the exact same all-pairs computation on
 //  the GPU (via ImageCorrelation), on a single-threaded CPU reference, and on a multi-threaded CPU reference;
-//  times all three, tracks peak memory, checks that they agree, and reports the speed/memory tradeoff.
-//  Intended for ad-hoc profiling, not shipping UI.
-//
+//  times all three, tracks peak memory, checks that they agree, and reports the speed/memory tradeoff
+//  Intended for ad-hoc profiling, not shipping UI
 
 import Foundation
 import CoreGraphics
@@ -15,6 +14,12 @@ import Metal
 import Darwin // mach task_info, for reading the process memory footprint
 
 enum PerformanceBenchmark {
+
+    /// Master switch for the in-app benchmark UI. This code stays in the project as a reference/profiling tool
+    /// but is disabled by default -- flip to true to show the "Run GPU vs CPU Benchmark" button in the sidebar.
+    /// Deliberately a runtime flag, NOT a `#if DEBUG`. The benchmark must run in an optimized Release build
+    /// to produce representative numbers, and DEBUG is not defined there
+    static let isEnabled : Bool = true;
 
     // The grayscale weights and premultiplied-RGBA handling here mirror convertToGrayScale in ImgMath.metal,
     // so the CPU reference scores identical pixels to the GPU path (the background is black, so with alpha

@@ -45,6 +45,7 @@ class AppStatusModel {
         case clearing
         case browsing
         case copying
+        case benchmarking
         case finished
         case error
     }
@@ -57,7 +58,7 @@ class AppStatusModel {
 
     /// True while an operation is in progress - used to disable controls & drive the spinner
     var isBusy : Bool {
-        return self.curPhase == .importing || self.curPhase == .analyzing || self.curPhase == .clearing || self.curPhase == .browsing || self.curPhase == .copying;
+        return self.curPhase == .importing || self.curPhase == .analyzing || self.curPhase == .clearing || self.curPhase == .browsing || self.curPhase == .copying || self.curPhase == .benchmarking;
     }
 
     func setPhase(to: Phase) {
@@ -488,31 +489,54 @@ struct ControlSideBar : View {
             }.padding(.horizontal, 20);
             AppStatus(model: self.status).padding(.vertical, 20);
             Text("Options");
-            Text("Max Canvas Size (Higher -> Higher Memory Usage/More Accurate Results): \(self.maxCanvasDim.formatted(.number.precision(.fractionLength(0...2))))");
-            Slider(value: $maxCanvasDim, in: 512...2048, step: 128)
-                .disabled(status.isBusy);
-            // TEMP (remove before release): runs the GPU-vs-CPU ZNCC benchmark and prints a report to the
-            // Xcode console. Uses synthetic images sized to the current Max Canvas Size, so it needs no imports
-            Button("Run GPU vs CPU Benchmark") {
-                let canvas = Int(self.maxCanvasDim);
-                // Prefer the user's imported photos; fall back to synthetic images only if fewer than two
-                // are imported, so the button always does something
-                let imported = model.images;
-                status.setStatusMessage("Benchmarking...");
-                Task.detached {
-                    let images = imported.count >= 2 ? imported
-                                                     : PerformanceBenchmark.syntheticImages(count: 20, canvas: canvas);
-                    guard let ctx = MetalComputeContext(),
-                          let result = await PerformanceBenchmark.run(images: images, context: ctx) else {
-                        await MainActor.run { status.setStatusMessage("Benchmark failed"); }
-                        return;
-                    }
-                    print(result.report);
-                    await MainActor.run { status.setStatusMessage(result.summary); }
+            // Before anything is imported the slider sets the canvas cap for the NEXT import. Once images
+            // exist the canvas is fixed for the set: the slider locks, show the actual size the images
+            // are held at. This keeps later imports consistent. Note a smaller
+            // image joining can still shrink the canvas, since every image must stay the same size to compare
+            // Clearing imports frees the slider again
+            if model.containsImages() {
+                if let size = model.images.first?.currentSize() {
+                    Text("Canvas locked at \(size.width)×\(size.height) px — Clear imports to change");
+                } else {
+                    Text("Canvas locked — Clear imports to change");
                 }
+            } else {
+                Text("Max Canvas Size (Higher -> Higher Memory Usage / More Accurate Results): \(Int(self.maxCanvasDim)) px");
             }
-            .padding(.top, 8)
-            .disabled(status.isBusy);
+            Slider(value: $maxCanvasDim, in: 512...2048, step: 128)
+                .disabled(status.isBusy || model.containsImages());
+            // Developer/profiling tool -- only shown when PerformanceBenchmark.isEnabled is flipped on.
+            // Runs the GPU-vs-CPU ZNCC benchmark and prints a report to the Xcode console, using the
+            // imported photos (or synthetic images sized to the current Max Canvas Size if fewer than two)
+            if PerformanceBenchmark.isEnabled {
+                Button("Run GPU vs CPU Benchmark") {
+                    let canvas = Int(self.maxCanvasDim);
+                    // Prefer the user's imported photos; fall back to synthetic images only if fewer than two
+                    // are imported, so the button always does something
+                    let imported = model.images;
+                    status.setPhase(to: .benchmarking);
+                    status.setStatusMessage("Benchmarking...");
+                    Task.detached {
+                        let images = await imported.count >= 2 ? imported
+                                                         : PerformanceBenchmark.syntheticImages(count: 20, canvas: canvas);
+                        guard let ctx = MetalComputeContext(),
+                              let result = await PerformanceBenchmark.run(images: images, context: ctx) else {
+                            await MainActor.run {
+                                status.setPhase(to: .error);
+                                status.setStatusMessage("Benchmark failed");
+                            }
+                            return;
+                        }
+                        await print(result.report);
+                        await MainActor.run {
+                            status.setPhase(to: .finished);
+                            status.setStatusMessage(result.summary);
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                .disabled(status.isBusy);
+            }
             Spacer();
         }
         .padding()
