@@ -32,3 +32,24 @@ kernel void convertToGrayScale(constant uint8_t* rgbaArray [[buffer(0)]], consta
     // A*B + C*D + E*F
     grayScaleResult[threadId] = metal::dot(blendedChannels,rgbWeights->rgb);
 }
+
+/*
+ Find discrete cosine transform of a square 2D matrix
+ Utilizes a pre computed matrix to perform a dot product twice on the input matrix
+ - Parameters:
+    - preConstMtx: The pre-compute matrix of constants from preConstMtx[u][x] = α(u) · cos((2x+1)·u·π / 2N)
+    where u is the frequency component, N is the dimension of the input matrix, x is between 0...N-1
+    - inputMtx: The input square matrix to take the DCT of
+    - numRowsAndColumns: The dimensions of the inputMtx
+    - maxFreq: The maximum frequency
+ */
+kernel void convertDCT(constant float* preConstMtx [[buffer(0)]],
+                       constant float* inputMtx [[buffer(1)]],
+                       constant uint32_t& numRowsAndColumns [[buffer(2)]],
+                       constant uint32_t& maxFreq [[buffer(3)]],
+                       device float* result [[buffer(4)]],
+                       uint32_t groupId [[threadgroup_position_in_grid]],
+                       uint32_t localId [[thread_position_in_threadgroup]],
+                       uint32_t groupSize [[threads_per_threadgroup]]) {
+    
+}
