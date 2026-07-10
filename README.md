@@ -30,6 +30,27 @@ See **[Docs/Benchmarks.md](Docs/Benchmarks.md)** for the full methodology, the c
 
 ---
 
+## Roadmap
+
+Heading toward a v1 App Store release (free)
+
+### v1 — Ship blockers
+
+| # | Task                              | Status | Blocked by | Notes|
+| --- |-----------------------------------| --- | --- |------|
+| 1 | Perceptual hash engine (Metal)    | Done | — | Existing GitHub project — core detection |
+| 2 | Duplicate grouping via image hash | In progress | 1 | Hamming-distance threshold; DCT shader + `ComputeKernel` done, phash generation from results next |
+| 3 | Laplacian sharpness kernel        | To do | — | New Metal compute shader; feeds keeper scoring |
+| 4 | Keeper recommendation logic       | To do | 2, 3 | Score: sharpness + resolution + file size/format |
+| 5 | Photos library support (PhotoKit) | To do | 8 | Permission flow + fetch + delete (goes to Recently Deleted) |
+| 6 | Drag-and-drop folder scan         | To do | 8 | Drop on window / Dock icon; security-scoped bookmarks |
+| 7 | Review UI                         | To do | 1–6 | One window: groups grid, keeper pre-selected, batch remove |
+| 8 | App sandbox + entitlements        | To do | — | Photos + user-selected file access|
+| 9 | App Store assets                  | To do | 7 | Name check, icon, screenshots, description |
+| 10 | Update documentation              | To do | 2–7 | Reconcile README + diagrams with the shipped v1 (perceptual hash + Hamming, keeper logic, Photos/folder input) |
+
+---
+
 ## Highlights
 
 - **Duplicate detection** — imported images are scored pairwise, clustered with union-find, and grouped into keep/remove sets, with one representative image (the medoid) kept per cluster
