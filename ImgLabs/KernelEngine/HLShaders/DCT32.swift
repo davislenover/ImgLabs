@@ -16,14 +16,19 @@ public actor DCT32: ComputeKernel {
     private let resultDCTs : MTLBuffer; // 8x8xnumOfImages -- 64 floats per z-axis (resulting DCT image)
     private let numOfImages : UInt32;
     private let preConstMtx : MTLBuffer; // 8x32 precomputed DCT basis (buffer 0 in the shader)
+    
+    private let totalNumOfRowsAndColumns : UInt32;
+    private let maxFrequencyWaves : UInt32;
 
     private let observerStore : ObserverStore = ObserverStore();
 
-    public init(valuesArr: MTLBuffer, numOfImgs: UInt32, resultBuf: MTLBuffer, preConst: MTLBuffer) async {
+    public init(valuesArr: MTLBuffer, numOfImgs: UInt32, resultBuf: MTLBuffer, preConst: MTLBuffer, maxFreq: UInt32, numRowsAndColumns: UInt32) async {
         self.images = valuesArr;
         self.numOfImages = numOfImgs;
         self.resultDCTs = resultBuf;
         self.preConstMtx = preConst;
+        self.maxFrequencyWaves = maxFreq;
+        self.totalNumOfRowsAndColumns = numRowsAndColumns;
     }
     
     nonisolated public static func getFunctionName() -> String {
@@ -34,8 +39,8 @@ public actor DCT32: ComputeKernel {
         let values : MTLBuffer = await self.images;
         let preConst : MTLBuffer = await self.preConstMtx;
         var num : UInt32 = self.numOfImages;
-        var numRowsAndColumns : UInt32 = 32;
-        var maxFreq : UInt32 = 8;
+        var numRowsAndColumns : UInt32 = self.totalNumOfRowsAndColumns;
+        var maxFreq : UInt32 = self.maxFrequencyWaves;
         let result : MTLBuffer = await self.resultDCTs;
         return { encoder, pipelineState in
             // Setup values
@@ -115,17 +120,24 @@ class DCT32Factory: ComputeKernelCreatable {
         // Pre-calculate preConstMtx if needed (the cache computes it once, then returns the same buffer)
         let preConstMtxBuf : MTLBuffer = try await bufferCache.buffer(for: self.preConstSource, device: devToAlloc);
 
-        return await DCT32(valuesArr: imagesBuf, numOfImgs: numOfImages, resultBuf: resultAlloc, preConst: preConstMtxBuf);
+        return await DCT32(valuesArr: imagesBuf, numOfImgs: numOfImages, resultBuf: resultAlloc, preConst: preConstMtxBuf, maxFreq: UInt32(PreConstMtx.totalFreqWaves), numRowsAndColumns: UInt32(PreConstMtx.totalPixelsPerRow));
     }
     
     private class PreConstMtx : MTBufable {
+        public static let totalFreqWaves : Int = 8;
+        public static let totalPixelsPerRow : Int = 32;
+        
         func toMTLBuffer(_ device: any MTLDevice) async throws -> any MTLBuffer {
             // Precompute preConstMtx (8x32 matrix)
-            var preConstMtx : [Float] = .init(repeating: 0, count: 256);
-            for u in 0...7 {
-                for x in 0...31 {
-                    let val : Float = Self.a(u) * cosf((Float.pi * (2*Float(x) + 1) * Float(u)) / 64);
-                    preConstMtx[(u*32) + x] = val;
+            var preConstMtx : [Float] = .init(repeating: 0, count: Int(try self.MTLBufferSize()));
+            for u in 0...(Self.totalFreqWaves-1) {
+                for x in 0...(Self.totalPixelsPerRow-1) {
+                    let alpha : Float = Self.a(u);
+                    let n : Float = Float(Self.totalPixelsPerRow);
+                    let numerator : Float = Float.pi * (2 * Float(x) + 1) * Float(u);
+                    let denominator : Float = 2 * n;
+                    let val : Float = alpha * cosf(numerator / denominator);
+                    preConstMtx[(u*Self.totalPixelsPerRow) + x] = val;
                 }
             }
 
@@ -135,14 +147,15 @@ class DCT32Factory: ComputeKernelCreatable {
             return newBuf;
         }
         
+        /// - Returns: The total number of floating point elements
         func MTLBufferSize() throws -> UInt32 {
-            return 256;
+            return UInt32(Self.totalFreqWaves*Self.totalPixelsPerRow);
         }
         
         private static func a(_ u: Int) -> Float {
             // Standard DCT-II normalisation: α(0) = sqrt(1/N), α(u>0) = sqrt(2/N), N = 32.
             // Use Float division -- 1/32 and 2/32 as Ints truncate to 0 (so sqrt would return 0).
-            let n : Float = 32;
+            let n : Float = Float(Self.totalPixelsPerRow);
             return u == 0 ? (1 / n).squareRoot() : (2 / n).squareRoot();
         }
         
