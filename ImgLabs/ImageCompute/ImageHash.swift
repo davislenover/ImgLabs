@@ -114,32 +114,5 @@ public actor ImageHash {
         }
         return hashes;
     }
-    
-    /// Captures a kernel's resident output buffer (published as a DeviceBuffer) so it can be handed straight to
-    /// the next kernel's factory without a CPU round-trip
-    private class DeviceBufferResult : ResultObserver<DeviceBuffer> {
-        var buffer : DeviceBuffer? = nil;
-        func update(with: DeviceBuffer) {
-            self.buffer = with;
-        }
-    }
-    
-    private class FloatArrayResult : ResultObserver<[Float]>, MTBufable {
-        func toMTLBuffer(_ device: any MTLDevice) async throws -> any MTLBuffer {
-            guard let newBuf : MTLBuffer = device.makeBuffer(bytes: self.result, length: self.result.count*MemoryLayout<Float>.stride, options: .storageModeShared) else {
-                throw ImageError.failedToConvertDataToMTLBuffer;
-            }
-            return newBuf;
-        }
-        
-        func MTLBufferSize() throws -> UInt32 {
-            return UInt32(self.result.count);
-        }
-        
-        var result: [Float] = [];
-        func update(with: [Float]) {
-            self.result = with;
-        }
-    }
 }
 
