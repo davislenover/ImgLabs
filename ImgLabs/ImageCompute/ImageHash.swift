@@ -114,5 +114,52 @@ public actor ImageHash {
         }
         return hashes;
     }
+    
+    
+    /// Calculates the hamming distance between two pHashes (i.e., by how many bits do the hashes differ)
+    /// - Parameters:
+    ///     - img1: The first image to compare
+    ///     - img2: The second image to compare
+    /// - Returns: An unsigned 8-bit integer denoting by how many bits the two 64-bit hashes differ
+    public static func getHammingDistance(img1: ImageHash, img2: ImageHash) async -> UInt8 {
+        // XOR both hashes then count number of ones, yields the hamming distance
+        let result : UInt64 = await img1.hash() ^ img2.hash();
+        let ones : UInt8 = UInt8(result.nonzeroBitCount);
+        return ones;
+    }
+    
+    /// Calculates a 2D strided matrix of hamming distances given an array of ImageHash objects (i.e., every image's pHash is compared to all other images)
+    /// - Parameters:
+    ///     - imagesHashes: An array of ImageHash objects to compare
+    /// - Returns: A 2D strided matrix of Uint8's denoting the hamming distance each image's pHash is to one another (i.e., row 0 is input image 0)
+    public static func getHammingDistanceMtx(imagesHashes : [ImageHash]) async -> [UInt8] {
+        // For every image, get the hamming distance between other images
+        // Uses a TaskGroup to calculate the matrix in parallel
+        // Allocate a countxcount matrix (strided)
+        let count = imagesHashes.count;
+        var hammingDistMtx : [UInt8] = Array<UInt8>(repeating: 0, count: count*count);
+        await withTaskGroup(of: (Int, [UInt8]).self) { group in
+            // Each task computes one full row: image[curIter] against all other images
+            for curIter in 0..<count {
+                let curImgHashObj : ImageHash = imagesHashes[curIter];
+                group.addTask {
+                    var row : [UInt8] = Array<UInt8>(repeating: 0, count: count);
+                    for otherImgHashObj in imagesHashes.enumerated() {
+                        if curIter != otherImgHashObj.offset {
+                            row[otherImgHashObj.offset] = await getHammingDistance(img1: curImgHashObj, img2: otherImgHashObj.element);
+                        }
+                    }
+                    return (curIter, row);
+                }
+            }
+            // Copy each completed row into the strided matrix
+            for await (curIter, row) in group {
+                let start : Int = curIter * count;
+                hammingDistMtx.replaceSubrange(start..<(start + count), with: row);
+            }
+        }
+        return hammingDistMtx;
+    }
+    
 }
 
