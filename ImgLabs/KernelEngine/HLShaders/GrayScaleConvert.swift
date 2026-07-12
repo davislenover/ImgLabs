@@ -85,7 +85,7 @@ public actor GrayScaleConvert : ComputeKernel, Sendable {
 }
 
 
-class GrayScaleKernelFactory : ComputeKernelCreatable, Sendable {
+nonisolated class GrayScaleKernelFactory : ComputeKernelCreatable {
     // Shared cache of already-uploaded source buffers (BufferCache is an actor, so it stays Sendable)
     private let bufferCache : BufferCache;
 

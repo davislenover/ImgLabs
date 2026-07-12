@@ -9,4 +9,5 @@
 enum ImageError: Error {
     case noPixelData;
     case failedToConvertDataToMTLBuffer;
+    case failedToResizeImage;
 }

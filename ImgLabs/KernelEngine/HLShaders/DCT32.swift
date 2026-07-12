@@ -76,14 +76,18 @@ public actor DCT32: ComputeKernel {
     public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
-
+    
     public func notifyObservers() async {
-        await self.observerStore.callAll(with: DeviceBuffer(self.resultDCTs));
+        let rawPtr : UnsafeMutableRawPointer = self.resultDCTs.contents();
+        let count : Int = self.resultDCTs.length / MemoryLayout<Float>.stride;
+        let typedPointer : UnsafeMutablePointer<Float> = rawPtr.bindMemory(to: Float.self, capacity: count);
+        let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: count));
+        await self.observerStore.callAll(with: result);
     }
 }
 
 
-class DCT32Factory: ComputeKernelCreatable {
+nonisolated class DCT32Factory: ComputeKernelCreatable {
     
     // preConstMtx[u][x] = α(u) · cos((2x+1)·u·π / 2N)
     // N = 32 (total number of pixels per row)
@@ -123,7 +127,7 @@ class DCT32Factory: ComputeKernelCreatable {
         return await DCT32(valuesArr: imagesBuf, numOfImgs: numOfImages, resultBuf: resultAlloc, preConst: preConstMtxBuf, maxFreq: UInt32(PreConstMtx.totalFreqWaves), numRowsAndColumns: UInt32(PreConstMtx.totalPixelsPerRow));
     }
     
-    private class PreConstMtx : MTBufable {
+    private nonisolated class PreConstMtx : MTBufable {
         public static let totalFreqWaves : Int = 8;
         public static let totalPixelsPerRow : Int = 32;
         
