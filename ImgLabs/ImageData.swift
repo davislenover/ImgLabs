@@ -103,6 +103,18 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
         // bitMapData should now contain the raw RGBA values
     }
     
+    /// Creates a deep copy of the current ImageData, resmapled to a given target width and height (in px)
+    /// - Parameters:
+    ///     - targetWidth: The target width of the new image
+    ///     - targetHeight: The target height of the new image
+    /// - Returns: ImageData optional, nil if the current cgImage is nil
+    public func createResampledCopy(targetWidth : Int, targetHeight : Int) -> ImageData? {
+        guard let newImg = self.cgImage else {
+            return nil;
+        }
+        return ImageData(img: newImg, targetWidth: targetWidth, targetHeight: targetHeight, filePath: self.sourceURL);
+    }
+    
     /// Converts raw pixel data from the image ingested on creation to an MTLBuffer
     public func toMTLBuffer(_ device : MTLDevice) async throws -> MTLBuffer {
         guard let pixData = self.pixelData, let imgContext = self.imageContext else {
