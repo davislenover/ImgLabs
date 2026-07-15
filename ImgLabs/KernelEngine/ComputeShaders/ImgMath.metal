@@ -85,3 +85,65 @@ kernel void convertDCT(constant float* preConstMtx [[buffer(0)]],
         result[imageIndex * maxFreq * maxFreq + u * maxFreq + v] = acc;
     }
 }
+
+/*
+ Performs convolution of an (assumed to be) 3x3 matrix over a grayscale (one element per pixel) image set (a 3D strided matrix where each 2D matrix is a list of values)
+  - Parameters:
+    - convolMtx: A 2D 3x3 matrix that will "slide" over each set of 2D matricies within inputMtx
+    - inputMtx: The input 3D strided matrix, with 2D matricies the convolMtx will "slide" over
+    - numRows: The row dimensions of each 2D matrix in inputMtx
+    - numColumns: The column dimensions of each 2D matrix in inputMtx
+    - depth: The number of 2D matricies within inputMtx
+    - result: A 3D strided matrix where each 2D matrix is the result of the convolution
+ The thread grid created should match a thread to a specific X,Y pixel in each image where X is multiplied by the number of images -- (i.e., X,Y,Z -> X*Z,Y,1)
+ */
+kernel void convoluteImage(constant float* convolMtx [[buffer(0)]],
+                           device const float* inputMtx [[buffer(1)]],
+                           constant uint32_t& numRows [[buffer(2)]],
+                           constant uint32_t& numColumns [[buffer(3)]],
+                           constant uint32_t& depth [[buffer(4)]],
+                           device float* result [[buffer(5)]],
+                           uint2 threadId [[thread_position_in_grid]]) {
+    
+    // Each thread will be responsible for one pixel position in one image (and thus, one pixel position in result)
+    // Grid is "3D" -- 2D but with a multiplied X from Z axis (which is very lage), better for cache
+    const uint32_t imgIdx = threadId.x / numColumns; // Z
+    const uint32_t imgPixelX = (threadId.x % numColumns);
+    const uint32_t imgPixelY = threadId.y;
+    
+    if (imgIdx >= depth || imgPixelX >= numColumns || imgPixelY >= numRows) {
+        return;
+    }
+    
+    // Get corresponding pixel offset
+    const uint64_t sliceStrideOffset = (uint64_t)imgIdx * numRows * numColumns;
+    const uint64_t strideResultOffset = sliceStrideOffset + (imgPixelY * numColumns) + imgPixelX;
+    
+    // Get the values of all values surrounding the center pixel (threadPixel), multiply by their corresponding value in the convolMtx, add to total
+    // Deal with edges by clamping the value to 0
+    float conVolPixelResult = 0;
+    // Loop through the 3x3 spatial coordinate offsets
+    for (int yOffset = -1; yOffset <= 1; yOffset++) {
+        for (int xOffset = -1; xOffset <= 1; xOffset++) {
+                
+            const int targetX = (int)imgPixelX + xOffset;
+            const int targetY = (int)imgPixelY + yOffset;
+            
+            // Center midpoint (xOffset=0, yOffset=0) evaluates to Index 4
+            const uint8_t conVolMtxOffset = ((yOffset + 1) * 3) + (xOffset + 1);
+            const float conVolValue = convolMtx[conVolMtxOffset];
+                
+            // If target is out of bounds, treat its value as 0 and continue to next pass
+            if (targetX < 0 || targetX >= (int)numColumns || targetY < 0 || targetY >= (int)numRows) {
+                continue;
+            }
+                
+            // Calculate the source thread input offset index
+            const uint64_t strideOffset = sliceStrideOffset + (targetY * numColumns) + targetX;
+            const float pixelValue = inputMtx[strideOffset];
+                
+            conVolPixelResult += (pixelValue * conVolValue);
+        }
+    }
+    result[strideResultOffset] = conVolPixelResult;
+}

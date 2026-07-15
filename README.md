@@ -37,10 +37,10 @@ Heading toward a v1 App Store release (free)
 ### v1 — Ship blockers
 
 | # | Task                              | Status | Blocked by | Notes|
-| --- |-----------------------------------| --- | --- |------|
+| --- |-----------------------------------|  | --- |------|
 | 1 | Perceptual hash engine (Metal)    | Done | — | Existing GitHub project — core detection |
 | 2 | Duplicate grouping via image hash | In progress | 1 | Hamming-distance threshold; DCT shader + `ComputeKernel` done, phash generation from results next |
-| 3 | Laplacian sharpness kernel        | To do | — | New Metal compute shader; feeds keeper scoring |
+| 3 | Laplacian sharpness kernel        | In progress | — | New Metal compute shader; feeds keeper scoring |
 | 4 | Keeper recommendation logic       | To do | 2, 3 | Score: sharpness + resolution + file size/format |
 | 5 | Photos library support (PhotoKit) | To do | 8 | Permission flow + fetch + delete (goes to Recently Deleted) |
 | 6 | Drag-and-drop folder scan         | To do | 8 | Drop on window / Dock icon; security-scoped bookmarks |
