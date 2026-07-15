@@ -147,3 +147,57 @@ kernel void convoluteImage(constant float* convolMtx [[buffer(0)]],
     }
     result[strideResultOffset] = conVolPixelResult;
 }
+
+/*
+ Computes the population variance of each 2D matrix within a 3D strided matrix (one variance per z-axis set)
+ One threadgroup is responsible for one 2D matrix (set), reducing that set's sum and sum-of-squares in shared memory,
+ then thread 0 writes variance = (Σx²/N) - (Σx/N)² to result[setIndex]
+ The number of threadgroups dispatched must equal depth and as large as the device allows to keep the reduction shallow
+ - Parameters:
+    - inputMtx: The input 3D strided matrix, with 2D matricies (sets) laid back-to-back (each elemsPerSet floats)
+    - elemsPerSet: The number of elements in each 2D matrix (i.e., numRows * numColumns)
+    - depth: The number of 2D matricies within inputMtx
+    - result: One variance per set, indexed by threadgroup id (depth floats)
+ */
+kernel void calculateVariance(
+    device const float* inputMtx       [[buffer(0)]],
+    constant uint32_t& elemsPerSet     [[buffer(1)]],
+    constant uint32_t& depth           [[buffer(2)]],
+    device float* result               [[buffer(3)]],
+    threadgroup float2* localSharedMem [[threadgroup(0)]], // (Σx, Σx²) partial per thread
+    uint32_t groupId                   [[threadgroup_position_in_grid]],
+    uint32_t localId                   [[thread_position_in_threadgroup]],
+    uint32_t groupSize                 [[threads_per_threadgroup]])
+{
+    if (groupId >= depth) { return; }
+    // This threadgroup owns one set; find where its 2D matrix begins
+    device const float* set = inputMtx + (uint64_t)groupId * elemsPerSet;
+
+    // Each thread strides through the set accumulating a partial sum and sum of squares
+    // (handles sets larger than the threadgroup by looping; threads past the end simply don't run the loop)
+    float2 partial = float2(0.0f, 0.0f);
+    for (uint32_t idx = localId; idx < elemsPerSet; idx += groupSize) {
+        const float v = set[idx];
+        partial.x += v;        // Σx
+        partial.y += v * v;    // Σx²
+    }
+    localSharedMem[localId] = partial;
+    threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+
+    // Tree-based reduction within the threadgroup (assumes groupSize is a power of two)
+    // float2 reduces both Σx and Σx² in a single pass
+    for (uint32_t stride = groupSize / 2; stride > 0; stride >>= 1) {
+        if (localId < stride) {
+            localSharedMem[localId] += localSharedMem[localId + stride];
+        }
+        threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+    }
+
+    // Thread 0 finalizes: variance = E[x²] - (E[x])²
+    if (localId == 0) {
+        const float n = (float)elemsPerSet;
+        const float mean = localSharedMem[0].x / n;
+        const float meanOfSquares = localSharedMem[0].y / n;
+        result[groupId] = meanOfSquares - (mean * mean);
+    }
+}
