@@ -149,34 +149,44 @@ kernel void convoluteImage(constant float* convolMtx [[buffer(0)]],
 }
 
 /*
- Computes the population variance of each 2D matrix within a 3D strided matrix (one variance per z-axis set)
- One threadgroup is responsible for one 2D matrix (set), reducing that set's sum and sum-of-squares in shared memory,
- then thread 0 writes variance = (Σx²/N) - (Σx/N)² to result[setIndex]
- The number of threadgroups dispatched must equal depth and as large as the device allows to keep the reduction shallow
+ Accumulates the sum and sum-of-squares of each 2D matrix within a 3D strided matrix (one pair of totals per z-axis set)
+ The final variance = (Σx²/N) - (Σx/N)² should be computed on the CPU once the totals are ready
+ The grid is 2D (groupsPerSlice, depth): the Y axis selects the set, the X axis selects which cooperating threadgroup within that set
+ Each threadgroup reduces its slice of the set in shared memory, then thread 0 atomically adds it's partials into that set's accumulator
+ groupSize (threads per threadgroup) should be a power of two (for the tree reduction) and as large as the device allows
  - Parameters:
     - inputMtx: The input 3D strided matrix, with 2D matricies (sets) laid back-to-back (each elemsPerSet floats)
     - elemsPerSet: The number of elements in each 2D matrix (i.e., numRows * numColumns)
     - depth: The number of 2D matricies within inputMtx
-    - result: One variance per set, indexed by threadgroup id (depth floats)
+    - groupsPerSlice: The number of threadgroups cooperating on each set (the grid's X dimension)
+    - accum: Two floats per set laid back-to-back accum[2*set] = Σx, accum[2*set+1] = Σx² (must start zeroed)
  */
 kernel void calculateVariance(
-    device const float* inputMtx       [[buffer(0)]],
-    constant uint32_t& elemsPerSet     [[buffer(1)]],
-    constant uint32_t& depth           [[buffer(2)]],
-    device float* result               [[buffer(3)]],
-    threadgroup float2* localSharedMem [[threadgroup(0)]], // (Σx, Σx²) partial per thread
-    uint32_t groupId                   [[threadgroup_position_in_grid]],
-    uint32_t localId                   [[thread_position_in_threadgroup]],
-    uint32_t groupSize                 [[threads_per_threadgroup]])
+    device const float* inputMtx        [[buffer(0)]],
+    constant uint32_t& elemsPerSet      [[buffer(1)]],
+    constant uint32_t& depth            [[buffer(2)]],
+    constant uint32_t& groupsPerSlice   [[buffer(3)]],
+    device metal::atomic_float* accum   [[buffer(4)]], // (Σx, Σx²) per set, accumulated across cooperating threadgroups
+    threadgroup float2* localSharedMem  [[threadgroup(0)]], // (Σx, Σx²) partial per thread
+    uint2 groupId                       [[threadgroup_position_in_grid]],
+    uint2 localIdVec                    [[thread_position_in_threadgroup]],
+    uint2 groupSizeVec                  [[threads_per_threadgroup]])
 {
-    if (groupId >= depth) { return; }
-    // This threadgroup owns one set; find where its 2D matrix begins
-    device const float* set = inputMtx + (uint64_t)groupId * elemsPerSet;
+    // The threadgroup is 1D (height 1), so only the x components carry the local index and group size
+    const uint32_t localId = localIdVec.x;
+    const uint32_t groupSize = groupSizeVec.x;
 
-    // Each thread strides through the set accumulating a partial sum and sum of squares
-    // (handles sets larger than the threadgroup by looping; threads past the end simply don't run the loop)
+    const uint32_t sliceIdx = groupId.y; // Which set (2D matrix) this threadgroup helps reduce
+    if (sliceIdx >= depth) { return; }
+    const uint32_t chunkIdx = groupId.x; // Which cooperating threadgroup within the set
+
+    device const float* set = inputMtx + (uint64_t)sliceIdx * elemsPerSet;
+
+    // All threadgroups for this set together stride over the whole set; each thread accumulates (Σx, Σx²)
+    // Starting offset is unique per (threadgroup, thread); the stride skips over every other cooperating thread
     float2 partial = float2(0.0f, 0.0f);
-    for (uint32_t idx = localId; idx < elemsPerSet; idx += groupSize) {
+    const uint32_t stride = groupsPerSlice * groupSize; // Total threads cooperating on one set
+    for (uint32_t idx = chunkIdx * groupSize + localId; idx < elemsPerSet; idx += stride) {
         const float v = set[idx];
         partial.x += v;        // Σx
         partial.y += v * v;    // Σx²
@@ -186,18 +196,17 @@ kernel void calculateVariance(
 
     // Tree-based reduction within the threadgroup (assumes groupSize is a power of two)
     // float2 reduces both Σx and Σx² in a single pass
-    for (uint32_t stride = groupSize / 2; stride > 0; stride >>= 1) {
-        if (localId < stride) {
-            localSharedMem[localId] += localSharedMem[localId + stride];
+    for (uint32_t s = groupSize / 2; s > 0; s >>= 1) {
+        if (localId < s) {
+            localSharedMem[localId] += localSharedMem[localId + s];
         }
         threadgroup_barrier(metal::mem_flags::mem_threadgroup);
     }
 
-    // Thread 0 finalizes: variance = E[x²] - (E[x])²
+    // Thread 0 folds this threadgroup's partials into the set's accumulator
+    // Only one atomic pair per threadgroup, so contention stays low even with many cooperating groups
     if (localId == 0) {
-        const float n = (float)elemsPerSet;
-        const float mean = localSharedMem[0].x / n;
-        const float meanOfSquares = localSharedMem[0].y / n;
-        result[groupId] = meanOfSquares - (mean * mean);
+        metal::atomic_fetch_add_explicit(&accum[2 * sliceIdx],     localSharedMem[0].x, metal::memory_order::memory_order_relaxed);
+        metal::atomic_fetch_add_explicit(&accum[2 * sliceIdx + 1], localSharedMem[0].y, metal::memory_order::memory_order_relaxed);
     }
 }

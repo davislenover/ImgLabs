@@ -10,7 +10,7 @@ import Metal
 /// Wraps an ImageData object with a pHash value (encodes the image content as a 64-bit unsigned integer)
 /// pHash value is computed from a DCT transformation of the image (downscaled to 32x32), only frequency waves 0-7 are used
 /// 8x8 DCT matrix, each element is compared against the median, 0 if less than and 1 if greater than or equal to median -> 64 binary bits
-public actor ImageHash {
+public actor ImageHash: ImageDataResult {
     private static let dctFactory : ComputeKernelCreatable = DCT32Factory(); // static such that re-calls to create a kernel don't re-calculate preConstMtx
     private static let grayScaleFactory : ComputeKernelCreatable = GrayScaleKernelFactory();
     private let image: ImageData;
@@ -21,8 +21,9 @@ public actor ImageHash {
         self.hashVal = hashVal;
     }
     
-    public func hash() -> UInt64 {return self.hashVal;}
     public func imageData() -> ImageData {return self.image;}
+    /// The derived value for this result (the perceptual hash)
+    public func value() -> UInt64 {return self.hashVal;}
     
     /// Computes the pHash values of all ImageData objects within an array
     /// - Parameters:
@@ -58,7 +59,7 @@ public actor ImageHash {
         var buffers : [MTLBuffer] = [];
         for result in grayScaleImages {
             guard let devBuf : DeviceBuffer = await result.buffer else {
-                fatalError("No buffer in result");
+                throw KernelEngineError.missingKernelResult;
             }
             await buffers.append(try devBuf.toMTLBuffer(MTLContext.getDevice()));
         }
@@ -99,7 +100,7 @@ public actor ImageHash {
             let start : Int = index * valuesPerImage;
             let block : ArraySlice<Float> = dctValues[start..<(start + valuesPerImage)];
 
-            // Median of the 64 coefficients -- even number of elements, so the mean of the two central sorted values
+            // Median of the 64 coefficients, even number of elements, so the mean of the two central sorted values
             let sorted : [Float] = block.sorted();
             let median : Float = (sorted[valuesPerImage / 2 - 1] + sorted[valuesPerImage / 2]) / 2;
 
@@ -123,7 +124,7 @@ public actor ImageHash {
     /// - Returns: An unsigned 8-bit integer denoting by how many bits the two 64-bit hashes differ
     public static func getHammingDistance(img1: ImageHash, img2: ImageHash) async -> UInt8 {
         // XOR both hashes then count number of ones, yields the hamming distance
-        let result : UInt64 = await img1.hash() ^ img2.hash();
+        let result : UInt64 = await img1.value() ^ img2.value();
         let ones : UInt8 = UInt8(result.nonzeroBitCount);
         return ones;
     }
