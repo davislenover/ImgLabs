@@ -37,7 +37,7 @@ Heading toward a v1 App Store release (free)
 ### v1 — Ship blockers
 
 | # | Task                              | Status | Blocked by | Notes|
-| --- |-----------------------------------|  | --- |------|
+| --- | --- | --- | --- | --- |
 | 1 | Perceptual hash engine (Metal)    | Done | — | Existing GitHub project — core detection |
 | 2 | Duplicate grouping via image hash | In progress | 1 | Hamming-distance threshold; DCT shader + `ComputeKernel` done, phash generation done, wire up into keeper next |
 | 3 | Laplacian sharpness kernel        | In progress | — | convoluteImage and calculateVariance shader done, `ComputeKernel` definitions done, `ImageSharpness` generation done, wire up into keeper next |
