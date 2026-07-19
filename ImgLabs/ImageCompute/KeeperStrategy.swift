@@ -69,10 +69,11 @@ public struct ImageQuality: Sendable {
 public protocol KeeperStrategy {
     /// - Parameters:
     ///     - members: Indices (into the images/matrix order) of the images in one cluster
-    ///     - matrix: The full ZNCC similarity matrix
-    ///     - quality: Per-image quality, index-aligned with the matrix (may be empty if unavailable)
+    ///     - matrix: The full ZNCC similarity matrix, strided (row-major, element (i, j) at i * count + j)
+    ///     - count: N, the number of images (the side length of the strided matrix)
+    ///     - quality: Per-image quality, index-aligned with the images (may be empty if unavailable)
     /// - Returns: The index of the image to keep
-    func keeper(from members: [Int], matrix: [[Float]], quality: [ImageQuality]) -> Int;
+    func keeper(from members: [Int], matrix: [Float], count: Int, quality: [ImageQuality]) -> Int;
 }
 
 /// The original behavior: keep the medoid -- the image most similar on average to its cluster peers.
@@ -80,12 +81,12 @@ public protocol KeeperStrategy {
 public struct MedoidStrategy: KeeperStrategy {
     public init() {}
 
-    public func keeper(from members: [Int], matrix: [[Float]], quality: [ImageQuality]) -> Int {
+    public func keeper(from members: [Int], matrix: [Float], count: Int, quality: [ImageQuality]) -> Int {
         guard members.count > 1 else { return members[0]; }
         // The member never "less than" any other by average similarity is the most representative one
         return members.max(by: { a, b in
-            averageSimilarity(of: a, within: members, matrix: matrix)
-            < averageSimilarity(of: b, within: members, matrix: matrix);
+            averageSimilarity(of: a, within: members, matrix: matrix, count: count)
+            < averageSimilarity(of: b, within: members, matrix: matrix, count: count);
         })!;
     }
 }
@@ -120,11 +121,11 @@ public struct WeightedQualityStrategy: KeeperStrategy {
         self.weights = weights;
     }
 
-    public func keeper(from members: [Int], matrix: [[Float]], quality: [ImageQuality]) -> Int {
+    public func keeper(from members: [Int], matrix: [Float], count: Int, quality: [ImageQuality]) -> Int {
         guard members.count > 1 else { return members[0]; }
         // Without aligned quality can't score the quality signals, fall back to the medoid (no index out of range errors)
-        guard quality.count == matrix.count else {
-            return MedoidStrategy().keeper(from: members, matrix: matrix, quality: quality);
+        guard quality.count == count else {
+            return MedoidStrategy().keeper(from: members, matrix: matrix, count: count, quality: quality);
         }
 
         // Gather each signal across the cluster, then normalize each to [0, 1] within the cluster
@@ -132,7 +133,7 @@ public struct WeightedQualityStrategy: KeeperStrategy {
         let resolution = Self.normalize(members.map { Float(quality[$0].pixelCount); });
         let fileSize = Self.normalize(members.map { Float(quality[$0].fileSizeBytes); });
         let format = Self.normalize(members.map { Float(quality[$0].formatRank); });
-        let representativeness = Self.normalize(members.map { averageSimilarity(of: $0, within: members, matrix: matrix); });
+        let representativeness = Self.normalize(members.map { averageSimilarity(of: $0, within: members, matrix: matrix, count: count); });
 
         // Weighted sum per member, keep the highest. Ties resolve to the earliest member for determinism
         var bestMember: Int = members[0];

@@ -14,27 +14,29 @@ public let PROGRESS_START : CGFloat = 0.0;
 
 @Observable
 class ZNCCModel {
-    private var znccResults : [[Float]] = [];
+    private var znccResults : [Float] = [];
     private var qualityResults : [ImageQuality] = [];
-    private var hashResults : [UInt64] = [];
+    private var hammingResults : [UInt8] = [];
     private let metalContext : MetalComputeContext? = MetalComputeContext();
 
-    /// The most recent similarity matrix (empty until an analysis has run). Read-only to callers
-    public var results : [[Float]] { self.znccResults; }
+    /// The most recent similarity matrix, strided (row-major, element (i, j) at i * imageCount + j). Empty
+    /// until an analysis has run. Read-only to callers
+    public var results : [Float] { self.znccResults; }
 
     /// Per-image quality signals (sharpness, resolution, file size, format), aligned to the analyzed image
     /// order. Empty until an analysis has run. Consumed by the keeper-selection strategy
     public var quality : [ImageQuality] { self.qualityResults; }
 
-    /// Per-image perceptual hashes, aligned to the analyzed image order. Empty until an analysis has run.
-    /// Generated and ready for the hash-based grouping step -- not consumed yet
-    public var hashes : [UInt64] { self.hashResults; }
+    /// All-pairs Hamming-distance matrix of the images' perceptual hashes, strided (row-major, element
+    /// (i, j) at i * imageCount + j = differing bits between image i and j). Empty until an analysis has
+    /// run. Consumed by DuplicateView to add near-duplicate edges to the ZNCC clustering
+    public var hammingMatrix : [UInt8] { self.hammingResults; }
 
     /// Discards the current results (e.g. when the underlying images change so the results are stale)
     public func clear() {
         self.znccResults = [];
         self.qualityResults = [];
-        self.hashResults = [];
+        self.hammingResults = [];
     }
     
     /// Runs the main analysis algorithm (generates all scores)
@@ -54,17 +56,16 @@ class ZNCCModel {
         for result in sharpness {
             await sharpnessValues.append(result.value());
         }
-        var hashValues : [UInt64] = [];
-        for result in hashes {
-            await hashValues.append(result.value());
-        }
+        // Build the all-pairs Hamming-distance matrix, off the hash actors, so the sync clustering can treat
+        // it like the ZNCC matrix. Both are strided (row-major) [element (i, j) at i * count + j]
+        let hammingMatrix : [UInt8] = await ImageHash.getHammingDistanceMtx(imagesHashes: hashes);
         // Combine the sharpness scores with each image's resolution/file metadata into the quality signals
         // the keeper strategy scores against
         let quality = await ImageQuality.build(images: imgList, sharpness: sharpnessValues);
 
         self.znccResults = matrix;
         self.qualityResults = quality;
-        self.hashResults = hashValues;
+        self.hammingResults = hammingMatrix;
     }
 }
 
@@ -591,7 +592,9 @@ struct ImageGridPane : View {
     // importing more images without re-analyzing, the old matrix is stale (a different size), so we treat
     // it as "no results" rather than indexing past the end of the images array (which would crash)
     private var hasValidResults : Bool {
-        !znccObj.results.isEmpty && znccObj.results.count == model.images.count;
+        // The matrix is strided N*N; it matches the current image set only when its length is imageCount squared
+        let imageCount = model.images.count;
+        return !znccObj.results.isEmpty && znccObj.results.count == imageCount * imageCount;
     }
 
     var body : some View {
@@ -600,7 +603,7 @@ struct ImageGridPane : View {
                 // Something is being calculated
                 self.stateIndicator(icon: "wand.and.rays", message: "Analyzing images...");
             } else if hasValidResults {
-                DuplicateView(images: model.images, matrix: znccObj.results, quality: znccObj.quality, status: status);
+                DuplicateView(images: model.images, matrix: znccObj.results, quality: znccObj.quality, hammingMatrix: znccObj.hammingMatrix, status: status);
             } else {
                 // Nothing to show yet
                 self.stateIndicator(icon: "photo.on.rectangle.angled", message: "Import photos and press Analyze to find duplicates");

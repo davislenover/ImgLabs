@@ -30,7 +30,7 @@ public actor ImageAnalysisSession {
     // of kicking off a duplicate computation. This mirrors how MetalComputeContext caches pipeline
     // compilation (a cached Task keyed by function name).
     private var grayscaleTask : Task<[DeviceBuffer], Error>?;
-    private var matrixTask : Task<[[Float]], Error>?;
+    private var matrixTask : Task<[Float], Error>?;
     private var sharpnessTask : Task<[ImageSharpness], Error>?;
     private var hashTask : Task<[ImageHash], Error>?;
 
@@ -44,8 +44,9 @@ public actor ImageAnalysisSession {
 
     // MARK: - Public analyses
 
-    /// The all-pairs ZNCC similarity matrix. Reuses the shared grayscale batch
-    public func similarityMatrix() async throws -> [[Float]] {
+    /// The all-pairs ZNCC similarity matrix, strided (row-major, element (i, j) at i * count + j).
+    /// Reuses the shared grayscale batch
+    public func similarityMatrix() async throws -> [Float] {
         if let existing = self.matrixTask { return try await existing.value; }
         let context = self.context;
         let task = Task {

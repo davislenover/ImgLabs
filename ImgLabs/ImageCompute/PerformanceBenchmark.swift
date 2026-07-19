@@ -100,7 +100,7 @@ enum PerformanceBenchmark {
         // pipeline states and pays one-time setup costs, so it is timed separately as the "cold" number
         var gpuCold = 0.0;
         var gpuBest = Double.greatestFiniteMagnitude;
-        var gpuMatrix : [[Float]] = [];
+        var gpuMatrix : [Float] = [];
         let gpuPeak = await Self.measuringPeakFootprint {
             let coldStart = Date();
             guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
@@ -118,7 +118,7 @@ enum PerformanceBenchmark {
         // built by prepare() are the dominant CPU allocation, so they are included in the measured window
         var cpuBest = Double.greatestFiniteMagnitude;
         var cpuParallelBest = Double.greatestFiniteMagnitude;
-        var cpuMatrix : [[Float]] = [];
+        var cpuMatrix : [Float] = [];
         let cpuPeak = await Self.measuringPeakFootprint {
             let prepared = images.map { Self.prepare($0) };
             for _ in 0..<max(1, runs) {
@@ -184,15 +184,16 @@ enum PerformanceBenchmark {
         return Prepared(centered: gray, sumSquares: sumSquares);
     }
 
-    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it
-    private static func cpuSimilarityMatrix(_ prepared: [Prepared]) -> [[Float]] {
+    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it.
+    /// Returns a strided (row-major) NxN matrix; element (i, j) at i * n + j
+    private static func cpuSimilarityMatrix(_ prepared: [Prepared]) -> [Float] {
         let n = prepared.count;
-        var matrix = Array(repeating: Array(repeating: Float(0), count: n), count: n);
+        var matrix = [Float](repeating: 0, count: n * n);
         for i in 0..<n {
             for j in 0...i {
                 let zncc = Self.zncc(prepared[i], prepared[j]);
-                matrix[i][j] = zncc;
-                matrix[j][i] = zncc;
+                matrix[i * n + j] = zncc;
+                matrix[j * n + i] = zncc;
             }
         }
         return matrix;
@@ -201,8 +202,9 @@ enum PerformanceBenchmark {
     /// Multi-threaded reference: the same computation with the rows fanned across all cores via
     /// DispatchQueue.concurrentPerform. Row i owns cells (i, 0...i) and their mirror (0...i, i); those index
     /// sets are disjoint across rows, so the threads write non-overlapping memory (no locking needed)
-    /// Results go into a flat backing buffer to avoid mutating a shared [[Float]] from multiple threads
-    private static func cpuSimilarityMatrixParallel(_ prepared: [Prepared]) -> [[Float]] {
+    /// Results go into a flat backing buffer to avoid mutating shared rows from multiple threads.
+    /// Returns a strided (row-major) NxN matrix; element (i, j) at i * n + j
+    private static func cpuSimilarityMatrixParallel(_ prepared: [Prepared]) -> [Float] {
         let n = prepared.count;
         var flat = [Float](repeating: 0, count: n * n);
         flat.withUnsafeMutableBufferPointer { buffer in
@@ -214,8 +216,7 @@ enum PerformanceBenchmark {
                 }
             }
         }
-        // Reshape the flat buffer back into rows
-        return (0..<n).map { i in Array(flat[(i * n)..<(i * n + n)]) };
+        return flat;
     }
 
     /// The ZNCC score for one pair of prepared (mean-centered) images
@@ -229,13 +230,11 @@ enum PerformanceBenchmark {
 
     // MARK: - Helpers
 
-    private static func maxAbsDifference(_ lhs: [[Float]], _ rhs: [[Float]]) -> Float {
+    private static func maxAbsDifference(_ lhs: [Float], _ rhs: [Float]) -> Float {
         guard lhs.count == rhs.count else { return .greatestFiniteMagnitude; }
         var worst : Float = 0;
         for i in 0..<lhs.count {
-            for j in 0..<lhs[i].count {
-                worst = max(worst, abs(lhs[i][j] - rhs[i][j]));
-            }
+            worst = max(worst, abs(lhs[i] - rhs[i]));
         }
         return worst;
     }

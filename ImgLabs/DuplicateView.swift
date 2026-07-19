@@ -73,12 +73,16 @@ class NonDuplicateExporter {
 }
 
 struct DuplicateView : View {
-    // Index i in `matrix` corresponds to `images[i]` -- the same order similarityMatrix received
+    // Strided (row-major) NxN similarity matrix; element (i, j) at i * images.count + j corresponds to
+    // images[i] vs images[j] -- the same order similarityMatrix received
     let images : [ImageData];
-    let matrix : [[Float]];
-    // Per-image quality signals, aligned to `images`/`matrix`. Drives keeper selection. May be empty
+    let matrix : [Float];
+    // Per-image quality signals, aligned to `images`. Drives keeper selection. May be empty
     // (e.g. if quality couldn't be computed), in which case keeper selection falls back to the medoid
     let quality : [ImageQuality];
+    // Strided (row-major) NxN Hamming-distance matrix of the images' perceptual hashes, aligned to `matrix`.
+    // Adds near-duplicate edges to the clustering. May be empty, in which case grouping stays purely ZNCC-driven
+    let hammingMatrix : [UInt8];
     // Shared status so the export can report progress and disable controls (via .copying) while it runs
     let status : AppStatusModel;
 
@@ -86,14 +90,18 @@ struct DuplicateView : View {
     // The slider writes to this, and each change re-evaluates `groups` below and redraws the list
     @State private var threshold : Double = 0.95;
 
+    // Max Hamming distance (in bits, out of 64) at which two images' perceptual hashes are treated as a
+    // near-duplicate. Higher = more tolerant = more matches. Its slider re-runs body the same way as threshold
+    @State private var hashThreshold : Double = 8;
+
     // A computed property: it isn't stored, it's recalculated every time it's read (i.e. every `body`
     // evaluation). Because reading it happens during `body`, changing `threshold` re-runs body, which
     // re-reads this and re-clusters with the new threshold
     private var groups : [DuplicateGroup] {
         // Use the quality-aware strategy when quality signals are available and aligned, otherwise fall back
         // to the medoid so results are still sensible without them
-        let strategy : KeeperStrategy = self.quality.count == self.matrix.count ? WeightedQualityStrategy() : MedoidStrategy();
-        return duplicateGroups(matrix: self.matrix, threshold: Float(self.threshold), quality: self.quality, strategy: strategy);
+        let strategy : KeeperStrategy = self.quality.count == self.images.count ? WeightedQualityStrategy() : MedoidStrategy();
+        return duplicateGroups(matrix: self.matrix, count: self.images.count, threshold: Float(self.threshold), hammingMatrix: self.hammingMatrix, hashThreshold: UInt8(self.hashThreshold), quality: self.quality, strategy: strategy);
     }
 
     // How many images are flagged for removal across all clusters.
@@ -223,6 +231,19 @@ struct DuplicateView : View {
                     .monospacedDigit() // keeps the number from shifting width as it changes
                     .frame(width: 44, alignment: .trailing);
             }
+
+            // Perceptual-hash tolerance. Only meaningful when the Hamming matrix is available; hidden
+            // otherwise so it never implies a control that does nothing. Higher = matches more differing bits
+            if self.hammingMatrix.count == self.matrix.count {
+                HStack {
+                    Text("Hash tolerance");
+                    Slider(value: $hashThreshold, in: 0...16, step: 1);
+                    // Show the current cutoff as "<= N bits" (out of 64)
+                    Text("\u{2264} \(Int(self.hashThreshold)) bits")
+                        .monospacedDigit() // keeps the number from shifting width as it changes
+                        .frame(width: 60, alignment: .trailing);
+                }
+            }
         }
     }
 
@@ -282,7 +303,8 @@ struct DuplicateView : View {
                 // Show how similar this duplicate is to the keeper (its ZNCC score against the keeper),
                 // formatted as a percentage so the user understands why it was flagged
                 Label {
-                    Text(Double(self.matrix[keeperIndex][index]), format: .percent.precision(.fractionLength(0)));
+                    // Strided index into the row-major matrix: (keeperIndex, index) at keeperIndex * N + index
+                    Text(Double(self.matrix[keeperIndex * self.images.count + index]), format: .percent.precision(.fractionLength(0)));
                 } icon: {
                     Image(systemName: "xmark.circle.fill");
                 }

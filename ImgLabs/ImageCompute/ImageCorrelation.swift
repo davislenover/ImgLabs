@@ -102,8 +102,10 @@ class ImageCorrelation {
     /// Compares each image within images array to all other images
     /// - Parameters:
     ///     - images: The images in an array to compare
-    /// - Returns: A matrix of floating point values, denoting how simillar image on row y to image on column x is (from 0 to 1, higher values being more simillar)
-    func similarityMatrix(images: [ImageData]) async throws -> [[Float]] {
+    /// - Returns: An NxN strided (row-major) matrix of floating point values, denoting how similar image on
+    ///            row y to image on column x is (from 0 to 1, higher values being more similar). Element
+    ///            (row, col) lives at index row * images.count + col
+    func similarityMatrix(images: [ImageData]) async throws -> [Float] {
         // Nothing to compare -- return an empty matrix (mirrors the old per-pair loop, which produced none)
         guard !images.isEmpty else { return []; }
 
@@ -131,10 +133,11 @@ class ImageCorrelation {
     /// This is the shared core of the similarity pipeline: everything except the grayscale stage
     /// - Parameters:
     ///     - grayscaleBuffers: The full-canvas grayscale of each image, already resident on the GPU
-    /// - Returns: An NxN symmetric matrix; matrix[i][j] is the ZNCC of image i and image j (in [-1, 1])
+    /// - Returns: An NxN symmetric strided (row-major) matrix; element (i, j) at index i * N + j is the ZNCC
+    ///            of image i and image j (in [-1, 1])
     /// - Note: The grayscale buffers belong to the caller. This method reads them but never frees them,
     ///         so a coordinator can keep them alive for another analysis (e.g. sharpness)
-    func similarityMatrix(grayscaleBuffers: [DeviceBuffer]) async throws -> [[Float]] {
+    func similarityMatrix(grayscaleBuffers: [DeviceBuffer]) async throws -> [Float] {
         guard !grayscaleBuffers.isEmpty else { return []; }
         // Intermediate arrays (the mean-centred and squared results) stay resident on the GPU between stages:
         // each array kernel publishes its output as a DeviceBuffer, which the next factory reads directly.
@@ -229,17 +232,17 @@ class ImageCorrelation {
         await dotProductKernel.addObserver(dotProductResults);
         try await MetalRunner.runCompute(from: self.computeContext, for: [dotProductKernel]);
 
-        // Populate results into a full square matrix
+        // Populate results into a full square strided (row-major) matrix: element (row, col) at row * N + col
         // Only the lower triangle (including the diagonal) was computed, so mirror each value across
         // the diagonal since ZNCC is symmetric (zncc(i,j) == zncc(j,i))
         let dotProducts : [Float] = dotProductResults.result;
-        var znccResults : [[Float]] = Array(repeating: Array(repeating: Float(0), count: imageCount), count: imageCount);
+        var znccResults : [Float] = Array(repeating: Float(0), count: imageCount * imageCount);
         for row in 0..<imageCount {
             for col in 0...row {
                 let dot : Float = dotProducts[BatchedDotProductFactory.pairIndex(row: row, col: col)];
                 let zncc : Float = dot / (sumPow2[row] * sumPow2[col]).squareRoot();
-                znccResults[row][col] = zncc;
-                znccResults[col][row] = zncc; // Mirror across the diagonal (no-op when row == col)
+                znccResults[row * imageCount + col] = zncc;
+                znccResults[col * imageCount + row] = zncc; // Mirror across the diagonal (no-op when row == col)
             }
         }
         return znccResults;
