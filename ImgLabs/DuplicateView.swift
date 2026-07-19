@@ -76,6 +76,9 @@ struct DuplicateView : View {
     // Index i in `matrix` corresponds to `images[i]` -- the same order similarityMatrix received
     let images : [ImageData];
     let matrix : [[Float]];
+    // Per-image quality signals, aligned to `images`/`matrix`. Drives keeper selection. May be empty
+    // (e.g. if quality couldn't be computed), in which case keeper selection falls back to the medoid
+    let quality : [ImageQuality];
     // Shared status so the export can report progress and disable controls (via .copying) while it runs
     let status : AppStatusModel;
 
@@ -87,7 +90,10 @@ struct DuplicateView : View {
     // evaluation). Because reading it happens during `body`, changing `threshold` re-runs body, which
     // re-reads this and re-clusters with the new threshold
     private var groups : [DuplicateGroup] {
-        duplicateGroups(matrix: self.matrix, threshold: Float(self.threshold));
+        // Use the quality-aware strategy when quality signals are available and aligned, otherwise fall back
+        // to the medoid so results are still sensible without them
+        let strategy : KeeperStrategy = self.quality.count == self.matrix.count ? WeightedQualityStrategy() : MedoidStrategy();
+        return duplicateGroups(matrix: self.matrix, threshold: Float(self.threshold), quality: self.quality, strategy: strategy);
     }
 
     // How many images are flagged for removal across all clusters.

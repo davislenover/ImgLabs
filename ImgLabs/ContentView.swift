@@ -15,21 +15,56 @@ public let PROGRESS_START : CGFloat = 0.0;
 @Observable
 class ZNCCModel {
     private var znccResults : [[Float]] = [];
+    private var qualityResults : [ImageQuality] = [];
+    private var hashResults : [UInt64] = [];
     private let metalContext : MetalComputeContext? = MetalComputeContext();
 
     /// The most recent similarity matrix (empty until an analysis has run). Read-only to callers
     public var results : [[Float]] { self.znccResults; }
 
-    /// Discards the current results (e.g. when the underlying images change so the matrix is stale)
+    /// Per-image quality signals (sharpness, resolution, file size, format), aligned to the analyzed image
+    /// order. Empty until an analysis has run. Consumed by the keeper-selection strategy
+    public var quality : [ImageQuality] { self.qualityResults; }
+
+    /// Per-image perceptual hashes, aligned to the analyzed image order. Empty until an analysis has run.
+    /// Generated and ready for the hash-based grouping step -- not consumed yet
+    public var hashes : [UInt64] { self.hashResults; }
+
+    /// Discards the current results (e.g. when the underlying images change so the results are stale)
     public func clear() {
         self.znccResults = [];
+        self.qualityResults = [];
+        self.hashResults = [];
     }
+    
+    /// Runs the main analysis algorithm (generates all scores)
     public func getZNCC(_ imgList : [ImageData]) async throws {
         guard let context = metalContext else {
             return;
         }
-        let imgCorrelation = ImageCorrelation(MetalContext: context);
-        znccResults = try await imgCorrelation.similarityMatrix(images: imgList);
+        // One session over this image set. The grayscale batch is computed once and shared by the similarity
+        // matrix and the sharpness scores; perceptual hashing runs its own 32x32 pipeline
+        let session = ImageAnalysisSession(images: imgList, context: context);
+        let matrix = try await session.similarityMatrix();
+        let sharpness = try await session.sharpnessScores();
+        let hashes = try await session.hashes();
+
+        // Pull the plain values off the result actors, keeping input order, so the UI/model holds Sendable arrays
+        var sharpnessValues : [Float] = [];
+        for result in sharpness {
+            await sharpnessValues.append(result.value());
+        }
+        var hashValues : [UInt64] = [];
+        for result in hashes {
+            await hashValues.append(result.value());
+        }
+        // Combine the sharpness scores with each image's resolution/file metadata into the quality signals
+        // the keeper strategy scores against
+        let quality = await ImageQuality.build(images: imgList, sharpness: sharpnessValues);
+
+        self.znccResults = matrix;
+        self.qualityResults = quality;
+        self.hashResults = hashValues;
     }
 }
 
@@ -565,7 +600,7 @@ struct ImageGridPane : View {
                 // Something is being calculated
                 self.stateIndicator(icon: "wand.and.rays", message: "Analyzing images...");
             } else if hasValidResults {
-                DuplicateView(images: model.images, matrix: znccObj.results, status: status);
+                DuplicateView(images: model.images, matrix: znccObj.results, quality: znccObj.quality, status: status);
             } else {
                 // Nothing to show yet
                 self.stateIndicator(icon: "photo.on.rectangle.angled", message: "Import photos and press Analyze to find duplicates");

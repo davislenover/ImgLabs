@@ -14,7 +14,7 @@ import Foundation
 ///
 /// Each item points to a "parent" item. Follow the parent links upward and you eventually reach an item
 /// that points to itself -- that item is the group's "leader" (root). Two items are in the same group if,
-/// and only if, they have the same leader. The leader is just an internal label; it means nothing about
+/// and only if, they have the same leader. The leader is just an internal label, it means nothing about
 /// the items themselves
 struct UnionFind {
     // parent[i] is the item that i points to. When parent[i] == i, item i is a leader.
@@ -85,8 +85,11 @@ struct DuplicateGroup : Identifiable {
 ///     - matrix: an NxN matrix where matrix[i][j] is the similarity of image i and image j, in [-1, 1]
 ///               It is symmetric (matrix[i][j] == matrix[j][i]) with 1.0 on the diagonal
 ///     - threshold: pairs whose similarity is >= this value are treated as duplicates of each other
+///     - quality: per-image quality signals, index-aligned with the matrix. Empty when unavailable, in
+///                which case a quality-aware strategy falls back to the medoid
+///     - strategy: how to choose each cluster's keeper. Defaults to the medoid (matrix-only) behavior
 /// - Returns: one DuplicateGroup per cluster containing 2+ images. Images with no duplicates are omitted
-func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
+func duplicateGroups(matrix: [[Float]], threshold: Float, quality: [ImageQuality] = [], strategy: KeeperStrategy = MedoidStrategy()) -> [DuplicateGroup] {
     let n = matrix.count;
     guard n > 1 else { return []; } // Need at least two images for a duplicate to exist
 
@@ -116,7 +119,7 @@ func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
         // .map transforms each element into something new, producing a new array. Here each bucket
         // (named `members` for clarity instead of using $0) becomes a DuplicateGroup
         .map { members in
-            let keeper = chooseKeeper(from: members, matrix: matrix);
+            let keeper = strategy.keeper(from: members, matrix: matrix, quality: quality);
             // members.filter { $0 != keeper } is every index in the cluster except the one we keep
             return DuplicateGroup(keep: keeper, duplicates: members.filter { $0 != keeper });
         }
@@ -126,24 +129,10 @@ func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
         .sorted { $0.all.min()! < $1.all.min()!; };
 }
 
-// MARK: - Keeper selection
+// MARK: - Keeper selection helpers
 
-/// Picks the most representative image in a cluster: the medoid
-private func chooseKeeper(from members: [Int], matrix: [[Float]]) -> Int {
-    guard members.count > 1 else { return members[0]; }
-    // .max(by:) returns the "largest" element according to the ordering closure. The closure takes two
-    // elements (a, b) and returns true when a should be considered LESS THAN b. So .max returns the element
-    // that is never "less than" any other -- i.e. the one with the greatest average similarity
-    // The result is an Optional (it would be nil for an empty collection); `!` force-unwraps it, which is
-    // safe here because the guard above guarantees members is non-empty
-    return members.max(by: { a, b in
-        averageSimilarity(of: a, within: members, matrix: matrix)
-        < averageSimilarity(of: b, within: members, matrix: matrix);
-    })!;
-}
-
-/// Average similarity of one image to the other members of its cluster
-private func averageSimilarity(of index: Int, within members: [Int], matrix: [[Float]]) -> Float {
+/// Average similarity of one image to the other members of its cluster.
+func averageSimilarity(of index: Int, within members: [Int], matrix: [[Float]]) -> Float {
     let others = members.filter { $0 != index }; // everyone in the cluster except `index` itself
     guard !others.isEmpty else { return 0; }
     // .reduce combines a collection into a single value. The first argument (Float(0)) is the starting

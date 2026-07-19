@@ -39,7 +39,9 @@ public actor ImageSharpness: ImageDataResult {
             throw ImageError.noPixelData;
         }
 
-        // Convert every image to grayscale (one float per pixel), batched into a single GPU submission
+        // Convert every image to grayscale (one float per pixel), batched into a single GPU submission, then
+        // delegate to the shared-grayscale variant below. Splitting the grayscale stage out lets a coordinator
+        // grayscale once and share the result with the ZNCC similarity matrix
         let grayScaleFactory: GrayScaleKernelFactory = GrayScaleKernelFactory();
         var grayScaleKernels: [ComputeKernel] = [];
         var grayScaleResults: [DeviceBufferResult] = [];
@@ -52,12 +54,31 @@ public actor ImageSharpness: ImageDataResult {
         }
         try await MetalRunner.runCompute(from: MTLContext, for: grayScaleKernels); // Suspends until completion
 
-        // Pack every grayscale image back-to-back into one contiguous 3D strided matrix (each slice is width*height floats)
-        var grayBuffers: [MTLBuffer] = [];
+        // Collect the resident grayscale buffers and run the rest of the pipeline against them
+        var grayscaleBuffers: [DeviceBuffer] = [];
         for result in grayScaleResults {
             guard let devBuf: DeviceBuffer = await result.buffer else {
                 throw KernelEngineError.missingKernelResult;
             }
+            grayscaleBuffers.append(devBuf);
+        }
+        return try await toSharpness(images: images, grayscaleBuffers: grayscaleBuffers, size: size, MTLContext: MTLContext);
+    }
+
+    /// Computes the sharpness score of every image from pre-computed grayscale buffers (one per image, in order)
+    /// This is the shared core of the sharpness pipeline: everything except the grayscale stage
+    /// - Parameters:
+    ///     - images: The images being scored (used to tag each result; aligned to grayscaleBuffers)
+    ///     - grayscaleBuffers: The full-canvas grayscale of each image, already resident on the GPU
+    ///     - size: The common canvas size shared by every image (drives the batched convolution/variance)
+    ///     - MTLContext: The Metal context object with a given Metal supported device
+    /// - Returns: The ImageData objects wrapped as ImageSharpness objects (aligned to the input order)
+    public static func toSharpness(images: [ImageData], grayscaleBuffers: [DeviceBuffer], size: (width: Int, height: Int), MTLContext: MetalComputeContext) async throws -> [ImageSharpness] {
+        guard !images.isEmpty else { return []; }
+
+        // Pack every grayscale image back-to-back into one contiguous 3D strided matrix (each slice is width*height floats)
+        var grayBuffers: [MTLBuffer] = [];
+        for devBuf in grayscaleBuffers {
             grayBuffers.append(try await devBuf.toMTLBuffer(MTLContext.getDevice()));
         }
         let totalBufLength: Int = grayBuffers.reduce(0) { $0 + $1.length; }
@@ -73,7 +94,7 @@ public actor ImageSharpness: ImageDataResult {
         let packedDeviceBuffer: DeviceBuffer = await DeviceBuffer(packedBuffer);
 
         // One Laplacian convolution over the whole batch
-        // numColumns is the image width (X), numRows is the image height (Y); the Laplacian filter is the factory default
+        // numColumns is the image width (X), numRows is the image height (Y). The Laplacian filter is the factory default
         let convolFactory: ConvoluteImageFactory = ConvoluteImageFactory(numRows: UInt32(size.height), numColumns: UInt32(size.width));
         let convolKernel: ComputeKernel = try await convolFactory.createKernel(bufable: packedDeviceBuffer, context: MTLContext);
         let convolResult: DeviceBufferResult = await DeviceBufferResult();

@@ -112,9 +112,13 @@ nonisolated class DCT32Factory: ComputeKernelCreatable {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
 
-        guard let numOfImages : UInt32 = try? bufable.MTLBufferSize() else {
+        // The bufable reports its total Float element count, not an image count. Each image is a
+        // 32x32 grayscale matrix (totalPixelsPerRow^2 floats), so divide to recover the image count
+        guard let totalElements : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of Images");
         }
+        let pixelsPerImage : UInt32 = UInt32(PreConstMtx.totalPixelsPerRow * PreConstMtx.totalPixelsPerRow);
+        let numOfImages : UInt32 = totalElements / pixelsPerImage;
 
         // The output is unique per kernel, so it is never cached/shared -- 64 floats (8x8) per image
         guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.stride*64*Int(numOfImages), options: [.storageModeShared]) else {
