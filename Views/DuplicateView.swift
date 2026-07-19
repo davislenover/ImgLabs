@@ -8,70 +8,6 @@
 import SwiftUI
 import AppKit // For NSOpenPanel (choosing the export folder)
 
-class NonDuplicateExporter {
-
-    /// The outcome of an export: how many files copied, and which sources failed (with a reason string).
-    /// Sendable (URL/String/Int are all Sendable) so it can be returned across actor boundaries.
-    public struct ExportResult : Sendable {
-        public let copied : Int;
-        public let failures : [(source: URL, reason: String)];
-    }
-
-    /// Copies each of the given source files into the destination folder.
-    /// `nonisolated` so it runs off the main actor (the project defaults isolation to MainActor) and takes
-    /// only Sendable inputs, so it can be safely called from a background Task without data-race warnings.
-    /// - Parameters:
-    ///     - sourceURLs: the files to copy (e.g. the keepers + unique images to keep)
-    ///     - folder: the destination directory
-    /// - Returns: A summary of how many files were copied and any per-file failures
-    @discardableResult
-    nonisolated public static func export(sourceURLs: [URL], to folder: URL) -> ExportResult {
-        let fileManager = FileManager.default;
-
-        // If the folder is security-scoped (sandbox), open access for the whole batch and close on exit
-        let folderScoped = folder.startAccessingSecurityScopedResource();
-        defer { if folderScoped { folder.stopAccessingSecurityScopedResource(); } }
-
-        var copied = 0;
-        var failures : [(source: URL, reason: String)] = [];
-
-        for source in sourceURLs {
-            // The source may also be security-scoped; open it just for this iteration (defer runs at the
-            // end of each loop-body scope, so access is released before the next file)
-            let sourceScoped = source.startAccessingSecurityScopedResource();
-            defer { if sourceScoped { source.stopAccessingSecurityScopedResource(); } }
-
-            // copyItem throws if the destination already exists, so pick a non-colliding name first
-            let destination = self.uniqueDestination(for: source, in: folder, fileManager: fileManager);
-            do {
-                try fileManager.copyItem(at: source, to: destination);
-                copied += 1;
-            } catch {
-                // Record and continue so one bad file doesn't abort the rest of the export
-                failures.append((source, error.localizedDescription));
-            }
-        }
-
-        return ExportResult(copied: copied, failures: failures);
-    }
-
-    /// Returns a URL inside `folder` that doesn't already exist, appending "-1", "-2", ... to the file name
-    /// on collision (e.g. photo.jpg -> photo-1.jpg) so an existing file is never overwritten.
-    nonisolated private static func uniqueDestination(for source: URL, in folder: URL, fileManager: FileManager) -> URL {
-        var candidate = folder.appendingPathComponent(source.lastPathComponent);
-        let fileExtension = source.pathExtension;                       // e.g. "jpg" (may be empty)
-        let baseName = source.deletingPathExtension().lastPathComponent; // e.g. "photo"
-
-        var counter = 1;
-        while fileManager.fileExists(atPath: candidate.path) {
-            let suffixedName = fileExtension.isEmpty ? "\(baseName)-\(counter)" : "\(baseName)-\(counter).\(fileExtension)";
-            candidate = folder.appendingPathComponent(suffixedName);
-            counter += 1;
-        }
-        return candidate;
-    }
-}
-
 struct DuplicateView : View {
     // Strided (row-major) NxN similarity matrix; element (i, j) at i * images.count + j corresponds to
     // images[i] vs images[j] -- the same order similarityMatrix received
@@ -85,6 +21,10 @@ struct DuplicateView : View {
     let hammingMatrix : [UInt8];
     // Shared status so the export can report progress and disable controls (via .copying) while it runs
     let status : AppStatusModel;
+    // Owns the imported images, used to delete flagged duplicates (library -> Recently Deleted, files -> Trash)
+    let model : ImageModel;
+    // Called after a delete succeeds so the parent can drop the now-stale analysis results
+    let onImagesDeleted : () -> Void;
 
     // @State is view-local, mutable storage that SwiftUI watches: when it changes, `body` re-runs
     // The slider writes to this, and each change re-evaluates `groups` below and redraws the list
@@ -93,6 +33,9 @@ struct DuplicateView : View {
     // Max Hamming distance (in bits, out of 64) at which two images' perceptual hashes are treated as a
     // near-duplicate. Higher = more tolerant = more matches. Its slider re-runs body the same way as threshold
     @State private var hashThreshold : Double = 8;
+
+    // Drives the confirmation alert shown before deleting duplicates (file trashing has no OS prompt of its own)
+    @State private var showDeleteConfirm : Bool = false;
 
     // A computed property: it isn't stored, it's recalculated every time it's read (i.e. every `body`
     // evaluation). Because reading it happens during `body`, changing `threshold` re-runs body, which
@@ -121,6 +64,28 @@ struct DuplicateView : View {
             .map { $0.element };
     }
 
+    // Every flagged (red) duplicate across all clusters, the images suggested for removal
+    private var flaggedDuplicates : [ImageData] {
+        self.groups.flatMap { $0.duplicates }.map { self.images[$0] };
+    }
+
+    // MARK: - Delete
+
+    /// Deletes every flagged duplicate through the model (library assets -> Recently Deleted, files -> Trash),
+    /// then asks the parent to drop the now-stale results so the user re-analyzes the reduced set
+    private func deleteDuplicates() {
+        let toDelete = self.flaggedDuplicates;
+        guard !toDelete.isEmpty else { return; }
+        let model = self.model;
+        let status = self.status;
+        let onDeleted = self.onImagesDeleted;
+        Task {
+            let deleted = await model.delete(toDelete, status);
+            // Only invalidate results if something was actually removed (user may cancel the system prompt)
+            if deleted > 0 { onDeleted(); }
+        }
+    }
+
     // MARK: - Export
 
     /// Asks the user for a destination folder, then copies every kept image into it off the main thread.
@@ -137,9 +102,12 @@ struct DuplicateView : View {
             // begin's completion runs on the main thread; bail unless the user picked a folder
             guard response == .OK, let folder = panel.url else { return; }
 
-            // Resolve the source file URLs on the main thread. URLs are Sendable, so only Sendable values
-            // (these URLs, the folder, and the status object) cross into the background task below
-            let urlsToExport = self.imagesToKeep.map { $0.getURL() };
+            // Split the keepers by origin: file imports have a real on-disk URL to copy; library imports have
+            // no file, so they're written out from their PHAsset via PHAssetResourceManager. Both use only
+            // Sendable values (URLs, identifiers, folder, status), which is what crosses into the task below
+            let keepers = self.imagesToKeep;
+            let fileURLs = keepers.filter { $0.getAssetIdentifier() == nil }.map { $0.getURL() };
+            let libraryIDs = keepers.compactMap { $0.getAssetIdentifier() };
             let status = self.status;
 
             status.setPhase(to: .copying);
@@ -149,17 +117,21 @@ struct DuplicateView : View {
             // Task.detached runs OFF the main actor so the (synchronous, blocking) file copies don't freeze
             // the UI. Status updates are hopped back onto the main actor via MainActor.run
             Task.detached {
-                let result = NonDuplicateExporter.export(sourceURLs: urlsToExport, to: folder);
+                // Copy file-origin keepers, then stream library-origin keepers out; combine the tallies
+                let fileResult = NonDuplicateExporter.export(sourceURLs: fileURLs, to: folder);
+                let libResult = await NonDuplicateExporter.exportLibraryAssets(identifiers: libraryIDs, to: folder);
+                let copied = fileResult.copied + libResult.copied;
+                let failures = fileResult.failures + libResult.failures;
                 await MainActor.run {
                     status.setProgress(PROGRESS_END);
-                    if result.failures.isEmpty {
+                    if failures.isEmpty {
                         status.setPhase(to: .finished);
-                        status.setStatusMessage("Exported \(result.copied) images");
+                        status.setStatusMessage("Exported \(copied) images");
                     } else {
                         // Surface the first failure's reason so the cause is visible (e.g. a permissions error)
                         status.setPhase(to: .error);
-                        let firstReason = result.failures.first?.reason ?? "unknown error";
-                        status.setStatusMessage("Exported \(result.copied), \(result.failures.count) failed: \(firstReason)");
+                        let firstReason = failures.first?.reason ?? "unknown error";
+                        status.setStatusMessage("Exported \(copied), \(failures.count) failed: \(firstReason)");
                     }
                 }
             }
@@ -190,24 +162,54 @@ struct DuplicateView : View {
                     }
                     .padding(.vertical, 8);
                 }
-                Button(action: {
-                    self.exportKeepers();
-                }) {
-                    // How the button looks
-                    Text("Export \(self.images.count - self.removalCount) Images")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .cornerRadius(10)
-                }
-                .disabled(self.status.isBusy) // Prevent re-triggering while another operation runs
+                self.actionBar
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Subviews
+
+    // The Export + Delete buttons shown beneath the cluster list
+    private var actionBar : some View {
+        HStack {
+            Button(action: {
+                self.exportKeepers();
+            }) {
+                // How the button looks
+                Text("Export \(self.images.count - self.removalCount) Images")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .cornerRadius(10)
+            }
+            .disabled(self.status.isBusy) // Prevent re-triggering while another operation runs
+
+            // Delete every flagged duplicate. Shown whenever there are flagged duplicates; confirmed first
+            // because file trashing (unlike PhotoKit deletion) has no system prompt of its own
+            if !self.flaggedDuplicates.isEmpty {
+                Button(role: .destructive, action: {
+                    self.showDeleteConfirm = true;
+                }) {
+                    Text("Delete \(self.flaggedDuplicates.count) Duplicates")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .cornerRadius(10)
+                }
+                .tint(.red)
+                .disabled(self.status.isBusy)
+                .alert("Delete \(self.flaggedDuplicates.count) duplicates?", isPresented: $showDeleteConfirm) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Delete", role: .destructive) { self.deleteDuplicates(); }
+                } message: {
+                    Text("Photos are moved to Recently Deleted and files are moved to the Trash. Both are recoverable.");
+                };
+            }
+        }
+    }
 
     // Breaking `body` into smaller computed views keeps it readable; each returns `some View`
     private var header : some View {
