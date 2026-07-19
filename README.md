@@ -42,10 +42,10 @@ Heading toward a v1 App Store release (free)
 | 2 | Duplicate grouping via image hash | Done | 1 | All-pairs Hamming-distance matrix unions near-duplicates (OR'd with ZNCC); live "Hash tolerance" slider                          |
 | 3 | Laplacian sharpness kernel        | Done | — | `convoluteImage` (3×3 Laplacian) + `calculateVariance` shaders → variance-of-Laplacian focus score per image                     |
 | 4 | Keeper recommendation logic       | Done | 2, 3 | `WeightedQualityStrategy`: normalized blend of sharpness + resolution + file size + format + representativeness, medoid fallback |
-| 5 | Photos library support (PhotoKit) | To do | 8 | Permission flow + fetch + delete (goes to Recently Deleted)                                                                      |
+| 5 | Photos library support (PhotoKit) | In Progress | 8 | Permission flow + fetch + delete (goes to Recently Deleted)                                                                      |
 | 6 | Drag-and-drop folder scan         | To do | 8 | Drop on window / Dock icon, security-scoped bookmarks                                                                            |
 | 7 | Review UI                         | To do | 1–6 | One window: groups grid, keeper pre-selected, batch remove                                                                       |
-| 8 | App sandbox + entitlements        | To do | — | Photos + user-selected file access                                                                                               |
+| 8 | App sandbox + entitlements        | In progress | — | Photos + user-selected file access                                                                                               |
 | 9 | App Store assets                  | To do | 7 | Name check, icon, screenshots, description                                                                                       |
 | 10 | Update documentation              | To do | 2–7 | Reconcile README + diagrams with the shipped v1 (perceptual hash + Hamming, keeper logic, Photos/folder input)                   |
 

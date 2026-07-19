@@ -19,14 +19,19 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
     private var pixelData: UnsafeMutablePointer<UInt8>?;
     
     private var sourceURL: URL; // Stores the path of the original file
-    
+    // The PhotoKit local identifier when this image was imported from the photo library; nil for file imports.
+    // Used to resolve the backing PHAsset so the image can be deleted (moved to Recently Deleted)
+    private let assetID: String?;
+
     // Constructor for class
     // targetWidth/targetHeight define the canvas the image is resampled onto, so every ImageData in a
     // set can be forced to a common size (required for the pixel-wise correlation to compare equal-length arrays)
-    init(img : CGImage, targetWidth : Int, targetHeight : Int, filePath: URL) {
+    // assetIdentifier is set only for photo-library imports (see getAssetIdentifier)
+    init(img : CGImage, targetWidth : Int, targetHeight : Int, filePath: URL, assetIdentifier: String? = nil) {
         // Extract raw pixel data
         self.cgImage = img;
         self.sourceURL = filePath;
+        self.assetID = assetIdentifier;
         self.ingestImage(imgToIngest: img, targetWidth: targetWidth, targetHeight: targetHeight);
     }
     
@@ -38,6 +43,10 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
     
     /// Gets the file path of the image
     public func getURL() -> URL {return self.sourceURL;}
+
+    /// The PhotoKit local identifier when this image was imported from the photo library; nil for file imports.
+    /// Callers use it to resolve the PHAsset for deletion
+    public func getAssetIdentifier() -> String? {return self.assetID;}
     
     /// Gets the CGImage representation of the ImageData object
     public func getCGImage() -> CGImage? {return self.cgImage;}
@@ -112,7 +121,7 @@ public class ImageData : Identifiable, MTBufable { // Identifiable denotes to Sw
         guard let newImg = self.cgImage else {
             return nil;
         }
-        return ImageData(img: newImg, targetWidth: targetWidth, targetHeight: targetHeight, filePath: self.sourceURL);
+        return ImageData(img: newImg, targetWidth: targetWidth, targetHeight: targetHeight, filePath: self.sourceURL, assetIdentifier: self.assetID);
     }
     
     /// Converts raw pixel data from the image ingested on creation to an MTLBuffer
