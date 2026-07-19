@@ -1,8 +1,8 @@
 @startuml
 
 ' The end-to-end flow that turns a folder of images into reviewable duplicate groups
-' The per-pair ZNCC score is computed on the GPU; the clustering and keeper selection
-' run on the CPU over the resulting similarity matrix
+' Three GPU signals are computed (ZNCC similarity, Laplacian sharpness, perceptual hash);
+' the clustering and keeper selection then run on the CPU over the resulting matrices/scores
 
 title ImgLabs — Duplicate Detection Pipeline
 
@@ -11,14 +11,28 @@ skinparam shadowing false
 start
 :Import images;
 :Resample to a common canvas\n(smaller of the set minimum or the Max Canvas Size cap);
-:Build the similarity matrix\n(all pairs, lower triangle only — ZNCC is symmetric);
+:Grayscale every image once\n(shared full-canvas batch — ImageAnalysisSession);
 note right
-  Each pair is scored on the GPU:
-  grayscale -> mean -> subtract-mean ->
-  square -> sum -> dot product
+  Computed a single time and reused by
+  both the ZNCC matrix and the sharpness score
 end note
-:Cluster with Union-Find\n(connect every pair scoring >= threshold);
-:Choose one keeper per cluster\n(medoid: highest average similarity);
+
+fork
+  :Build the ZNCC similarity matrix\n(all pairs, lower triangle only — ZNCC is symmetric);
+  note right
+    Each pair scored on the GPU:
+    grayscale -> mean -> subtract-mean ->
+    square -> sum -> dot product
+  end note
+fork again
+  :Score Laplacian sharpness per image\n(3x3 Laplacian convolution -> variance of the result);
+fork again
+  :Perceptual hash per image\n(own 32x32 grayscale -> DCT -> 8x8 low-freq -> median -> 64-bit);
+  :Build the all-pairs Hamming-distance matrix;
+end fork
+
+:Cluster with Union-Find\n(connect a pair when ZNCC >= threshold OR Hamming <= tolerance);
+:Choose one keeper per cluster\n(WeightedQualityStrategy: sharpness + resolution +\nfile size + format + representativeness; medoid fallback);
 :Render duplicate groups\n(DuplicateView, keep vs. remove);
 :Export keepers to a folder\n(cluster keepers + images in no cluster);
 stop

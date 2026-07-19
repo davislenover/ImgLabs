@@ -16,12 +16,14 @@ interface ResultObserver<Result> <<protocol>> {
     + {abstract} update(with: Result) : Void <<async>>
 }
 
+ class FloatArrayResult <ResultObserver[Float]> {}
+
 interface ComputeKernel <<protocol>> {
     + {static} {abstract} getFunctionName() : String
     + {abstract} encode() : ((MTLComputeCommandEncoder,MTLComputePipelineState) throws -> Void)
 }
 
-note left of ComputeKernel
+note top of ComputeKernel
     Defines a class which knows how to encode a kernel shader given buffers and dispatch threads
     Has a corresponding factory class (ComputeKernelCreatable) which instanciates the class
     Is an ObservableResult which ResultObservers can subscribe to, to get the resulting value after running on device
@@ -109,19 +111,38 @@ class BatchedDotProductFactory <<ComputeKernelCreatable, Sendable>> {
     + setImageArrays(_ arrays: [MTBufable]) : Void
 }
 
+class DCT32 <<ComputeKernel, Sendable>> {
+    - images : MTLBuffer
+    - preConstMtx : MTLBuffer
+    - resultDCTs : MTLBuffer
+}
+
+note bottom of DCT32 {
+    2-D DCT of 32x32 images via a precomputed 8x32 basis (two separable matrix passes,
+    one threadgroup per image). Backs the perceptual hash (ImageHash) -- publishes an [Float]
+    of 8x8 low-frequency coefficients per image to observers
+}
+
+class DCT32Factory <<ComputeKernelCreatable, Sendable>> {
+}
+
 ComputeKernelCreatable .l.> ComputeKernel
 ComputeKernelCreatable .r.> MTBufable
 ComputeKernelCreatable .u.> MetalComputeContext
 ComputeKernel .u.|> ObservableResult
-GrayScaleConvert .u.|> ComputeKernel
-GrayScaleKernelFactory .u.|> ComputeKernelCreatable
-DotProductFactory .u.|> ComputeKernelCreatable
+GrayScaleConvert -u-|> ComputeKernel
+GrayScaleKernelFactory -u-|> ComputeKernelCreatable
+DotProductFactory -u-|> ComputeKernelCreatable
 DotProductFactory ..> BufferCache
-BatchedDotProduct .u.|> ComputeKernel
-BatchedDotProductFactory .u.|> ComputeKernelCreatable
-DeviceBuffer .u.|> MTBufable
-ImageData .u.|> MTBufable
-MetalRunner .l.> MetalComputeContext
+BatchedDotProduct -u-|> ComputeKernel
+BatchedDotProductFactory -u-|> ComputeKernelCreatable
+DCT32 -u-|> ComputeKernel
+DCT32Factory -u-|> ComputeKernelCreatable
+DCT32Factory ..> BufferCache
+DeviceBuffer -u-|> MTBufable
+ImageData -u-|> MTBufable
+MetalRunner -l-> MetalComputeContext
 ObservableResult .l.> ResultObserver
+FloatArrayResult -u-|> ResultObserver
 
 @enduml
