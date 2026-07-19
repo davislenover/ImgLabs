@@ -1,0 +1,86 @@
+@startuml
+
+' The ImgLabs source organized by folder (package), with the main dependency direction between layers.
+' The KernelEngine subtree is a reusable, self-contained Metal framework (detailed in kernelSubsystem).
+' Regenerate the PNG with:  plantuml fileStructure.puml
+
+title ImgLabs — Source Structure (packages & dependencies)
+
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageStyle folder
+skinparam linetype ortho
+
+package "App" {
+  [ImgLabsApp.swift]
+  [ContentView.swift]
+}
+
+package "Views" {
+  [AppStatus.swift]
+  [ControlSideBar.swift]
+  [ImageGridPane.swift]
+  [DuplicateView.swift]
+}
+
+package "Models" {
+  [ImageModel.swift]
+  [ZNCCModel.swift]
+}
+
+package "Services" {
+  [MediaExporter.swift]
+}
+
+package "ImageCompute" {
+  [ImageAnalysisSession.swift]
+  [ImageCorrelation.swift]
+  [ImageHash.swift]
+  [ImageSharpness.swift]
+  [KeeperStrategy.swift]
+  [DuplicateFinder.swift]
+  [PerformanceBenchmark.swift]
+}
+
+package "Image Types" as ImageTypes {
+  [ImageData.swift]
+  [ImageError.swift]
+}
+
+package "KernelEngine" {
+  package "HLObjects" {
+    [context, runner, cache, protocols, observers]
+  }
+  package "HLShaders" {
+    [Swift kernel wrappers]
+  }
+  package "ComputeShaders" {
+    [raw Metal .metal functions]
+  }
+}
+
+' Only the core layering is drawn as arrows; secondary relationships are described in notes
+App --> Views
+App --> Models
+Views --> Models
+Models --> ImageCompute
+ImageCompute --> KernelEngine
+
+note bottom of Services
+  Off-main export (keepers) and delete
+  (files -> Trash, PHAssets -> Recently
+  Deleted). Called by Views & Models.
+end note
+
+note bottom of ImageTypes
+  Foundational value types (an image and
+  its errors), used across every layer.
+end note
+
+note right of KernelEngine
+  Reusable Metal compute framework.
+  See the Kernel Engine class diagram
+  (kernelSubsystem) for its internals.
+end note
+
+@enduml

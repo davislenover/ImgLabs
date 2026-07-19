@@ -180,26 +180,13 @@ The protocols and actors that make up the engine, and how they relate:
 
 ## Project Layout
 
-```
-ImgLabs/
-├── ImgLabsApp.swift             App entry point
-├── ContentView.swift            SwiftUI UI, app-state models, import/analyze flow
-├── DuplicateView.swift          Duplicate-cluster UI, sensitivity/hash-tolerance sliders, and keeper export
-├── ImageData.swift              Wraps a CGImage; resamples to a canvas; exposes RGBA as an MTLBuffer
-├── ImageError.swift             Image-related error types
-├── ImageCompute/
-│   ├── ImageAnalysisSession.swift  Coordinates one run; computes the shared grayscale batch once
-│   ├── ImageCorrelation.swift   ZNCC similarity + all-pairs (strided) similarity matrix
-│   ├── ImageHash.swift          Perceptual (DCT) hash + all-pairs Hamming-distance matrix
-│   ├── ImageSharpness.swift     Variance-of-Laplacian focus score per image
-│   ├── KeeperStrategy.swift     Quality signals + keeper-selection strategies (weighted / medoid)
-│   └── DuplicateFinder.swift    Union-find clustering (ZNCC + Hamming) + keeper dispatch
-├── KernelEngine/
-│   ├── HLObjects/               Core engine: context, runner, buffer cache, protocols, observers
-│   ├── HLShaders/               Swift kernel wrappers (grayscale, mean, dot, subtraction, DCT, convolution, variance)
-│   └── ComputeShaders/          Raw Metal (.metal) kernel functions
-└── Diagrams/                    Architecture & pipeline diagrams (PlantUML)
-```
+The app source is split into `Models/`, `Views/`, and `Services/`, with the image-analysis algorithms in
+`ImageCompute/` and the reusable GPU framework in `KernelEngine/`. Arrows show the dependency direction —
+each layer depends only on those beneath it.
+
+![ImgLabs source structure — packages & dependencies](ImgLabs/Diagrams/Architecture/fileStructure.png)
+
+*Source: [`fileStructure.puml`](ImgLabs/Diagrams/Architecture/fileStructure.puml).*
 
 ## Adding a New GPU Operation
 

@@ -16,21 +16,6 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		394250BC300D91B6009253F2 /* Views */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Views;
-			sourceTree = "<group>";
-		};
-		394250C3300D91BB009253F2 /* Models */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Models;
-			sourceTree = "<group>";
-		};
-		394250C7300D91BF009253F2 /* Services */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Services;
-			sourceTree = "<group>";
-		};
 		39819E112F56827B00471640 /* ImgLabs */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ImgLabs;
@@ -55,9 +40,6 @@
 				394250A5300D410A009253F2 /* README.md */,
 				39819E112F56827B00471640 /* ImgLabs */,
 				39819E102F56827B00471640 /* Products */,
-				394250BC300D91B6009253F2 /* Views */,
-				394250C3300D91BB009253F2 /* Models */,
-				394250C7300D91BF009253F2 /* Services */,
 			);
 			sourceTree = "<group>";
 		};
@@ -85,9 +67,6 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				394250BC300D91B6009253F2 /* Views */,
-				394250C3300D91BB009253F2 /* Models */,
-				394250C7300D91BF009253F2 /* Services */,
 				39819E112F56827B00471640 /* ImgLabs */,
 			);
 			name = ImgLabs;
