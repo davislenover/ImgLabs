@@ -235,119 +235,141 @@ class ImageModel: PHPickerViewControllerDelegate {
 
     // MARK: - File import
 
+    /// Opens the native Finder panel to pick image files, then hands the selection to `importImages`.
     func browseForImages(_ status : AppStatusModel, _ maxCanvasDim : Int) {
         status.setPhase(to: .browsing);
         status.setStatusMessage("Browsing for images...");
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose an Image"
         openPanel.showsHiddenFiles = false
-        openPanel.canChooseDirectories = false
+        openPanel.canChooseDirectories = true // allow dropping in a folder; importImages expands it to its images
         openPanel.canChooseFiles = true
         openPanel.allowsMultipleSelection = true
-        openPanel.allowedContentTypes = [.image] // Filters for images
+        openPanel.allowedContentTypes = [.image, .folder]
 
         // Open the native Finder sheet
         openPanel.begin { response in
-            if response == .OK {
-                let selectedURLs = openPanel.urls;
-                let selectedCount = selectedURLs.count;
-                // How many images were already imported before this run
-                let previousCount = self.imageList.count;
-                if (selectedCount == 0) {
-                    status.setPhase(to: .idle);
-                    status.setStatusMessage("Idle...");
-                    return;
-                }
-                Task {
-                    await MainActor.run {
-                        status.setPhase(to: .importing);
-                        status.setProgress(PROGRESS_START);
-                        status.setStatusMessage("Analyzing image sizes...");
-                    }
-
-                    // Determine the common canvas size (min width/height across the whole set)
-                    // Read the new selections' dimensions straight from their file headers, no pixel decode, so
-                    // this is low-memory. Add in the already-imported images too (via their retained
-                    // source size) so the canvas is consistent across accumulated imports
-                    let existingImages = await MainActor.run { self.imageList };
-                    var minWidth = Int.max;
-                    var minHeight = Int.max;
-                    for image in existingImages {
-                        if let size = image.originalSize() {
-                            minWidth = min(minWidth, size.width);
-                            minHeight = min(minHeight, size.height);
-                        }
-                    }
-                    for selectedURL in selectedURLs {
-                        if let size = Self.imageDimensions(at: selectedURL) {
-                            minWidth = min(minWidth, size.width);
-                            minHeight = min(minHeight, size.height);
-                        }
-                    }
-
-                    // Nothing yielded a readable size, finish without importing
-                    guard minWidth != Int.max, minHeight != Int.max else {
-                        await MainActor.run {
-                            status.setPhase(to: .finished);
-                            status.setProgress(PROGRESS_END);
-                            status.setStatusMessage("No valid images to import");
-                        }
-                        return;
-                    }
-                    // Cap the canvas
-                    let canvasWidth = min(minWidth, maxCanvasDim);
-                    let canvasHeight = min(minHeight, maxCanvasDim);
-
-                    // If a smaller image just joined the set, re-resample the already-imported images down to the
-                    // new common canvas so every image in the list stays the same length for the correlation
-                    for image in existingImages {
-                        if let current = image.currentSize(),
-                           current.width != canvasWidth || current.height != canvasHeight {
-                            image.resample(targetWidth: canvasWidth, targetHeight: canvasHeight);
-                        }
-                    }
-
-                    await MainActor.run {
-                        status.setStatusMessage("Importing images...");
-                    }
-
-                    // Decode + build each image ON THE MAIN ACTOR
-                    var importedCount = 0; // How many were successfully decoded & added this run
-                    for (index, selectedURL) in selectedURLs.enumerated() {
-                        let processed = index + 1;
-                        await MainActor.run {
-                            // CGImageSource (not NSImage) handles RAW (.ARW etc.) robustly and downsamples
-                            // during decode, so we never fully decode a huge original just to shrink it.
-                            if let cgImage = Self.decodedImage(at: selectedURL, maxPixelSize: max(canvasWidth, canvasHeight)) {
-                                let decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
-                                // Animate the append so the "Clear Imports" button's
-                                // transition plays when the first image arrives
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                                    self.imageList.append(decoded);
-                                }
-                                importedCount += 1;
-                            }
-                            status.setProgress(Double(processed) / Double(selectedCount));
-                            status.setStatusMessage("Importing image \(processed) of \(selectedCount)");
-                        }
-                    }
-                    await MainActor.run {
-                        let totalCount = self.imageList.count;
-                        let noun = importedCount == 1 ? "image" : "images";
-                        status.setPhase(to: .finished);
-                        status.setProgress(PROGRESS_END);
-                        if previousCount > 0 {
-                            // Appended to an existing set, report the delta and the running total
-                            status.setStatusMessage("Imported \(importedCount) more \(noun), \(totalCount) total");
-                        } else {
-                            status.setStatusMessage("Importing complete, \(importedCount) \(noun) imported");
-                        }
-                    }
-                }
-            } else {
-                // User clicked Cancel in the Finder panel, return to idle
+            guard response == .OK, !openPanel.urls.isEmpty else {
+                // User cancelled or picked nothing, return to idle
                 status.setPhase(to: .idle);
                 status.setStatusMessage("Idle...");
+                return;
+            }
+            self.importImages(from: openPanel.urls, status, maxCanvasDim: maxCanvasDim);
+        }
+    }
+
+    /// The shared ingest pipeline: resamples a set of images onto a common canvas and appends each to the
+    /// working set. Accepts files and/or folders (folders are expanded recursively to their image files, and
+    /// non-image files are ignored), so the file picker and drag-and-drop both feed the exact same path.
+    /// - Parameters:
+    ///     - inputURLs: files and/or folders to import
+    ///     - status: shared status for progress/messaging
+    ///     - maxCanvasDim: per-side cap on the comparison canvas (bounds per-image memory)
+    func importImages(from inputURLs: [URL], _ status : AppStatusModel, maxCanvasDim : Int) {
+        Task {
+            // Dropped/selected URLs may be security-scoped (sandbox). Hold access for the whole ingest -- a
+            // scoped folder's children are readable while the folder's access is open. Released on exit
+            let scopedURLs = inputURLs.filter { $0.startAccessingSecurityScopedResource() };
+            defer { for url in scopedURLs { url.stopAccessingSecurityScopedResource(); } }
+
+            await MainActor.run {
+                status.setPhase(to: .importing);
+                status.setProgress(PROGRESS_START);
+                status.setStatusMessage("Analyzing image sizes...");
+            }
+
+            // Expand any folders to their image files and drop anything that isn't an image
+            let selectedURLs = Self.imageFileURLs(from: inputURLs);
+            guard !selectedURLs.isEmpty else {
+                await MainActor.run {
+                    status.setPhase(to: .finished);
+                    status.setProgress(PROGRESS_END);
+                    status.setStatusMessage("No valid images to import");
+                }
+                return;
+            }
+
+            // How many images were already imported before this run
+            let previousCount = await MainActor.run { self.imageList.count };
+
+            // Determine the common canvas size (min width/height across the whole set)
+            // Read the new selections' dimensions straight from their file headers, no pixel decode, so
+            // this is low-memory. Add in the already-imported images too (via their retained
+            // source size) so the canvas is consistent across accumulated imports
+            let existingImages = await MainActor.run { self.imageList };
+            var minWidth = Int.max;
+            var minHeight = Int.max;
+            for image in existingImages {
+                if let size = image.originalSize() {
+                    minWidth = min(minWidth, size.width);
+                    minHeight = min(minHeight, size.height);
+                }
+            }
+            for selectedURL in selectedURLs {
+                if let size = Self.imageDimensions(at: selectedURL) {
+                    minWidth = min(minWidth, size.width);
+                    minHeight = min(minHeight, size.height);
+                }
+            }
+
+            // Nothing yielded a readable size, finish without importing
+            guard minWidth != Int.max, minHeight != Int.max else {
+                await MainActor.run {
+                    status.setPhase(to: .finished);
+                    status.setProgress(PROGRESS_END);
+                    status.setStatusMessage("No valid images to import");
+                }
+                return;
+            }
+            // Cap the canvas
+            let canvasWidth = min(minWidth, maxCanvasDim);
+            let canvasHeight = min(minHeight, maxCanvasDim);
+
+            // If a smaller image just joined the set, re-resample the already-imported images down to the
+            // new common canvas so every image in the list stays the same length for the correlation
+            for image in existingImages {
+                if let current = image.currentSize(),
+                   current.width != canvasWidth || current.height != canvasHeight {
+                    image.resample(targetWidth: canvasWidth, targetHeight: canvasHeight);
+                }
+            }
+
+            await MainActor.run {
+                status.setStatusMessage("Importing images...");
+            }
+
+            // Decode + build each image ON THE MAIN ACTOR
+            var importedCount = 0; // How many were successfully decoded & added this run
+            for (index, selectedURL) in selectedURLs.enumerated() {
+                let processed = index + 1;
+                await MainActor.run {
+                    // CGImageSource (not NSImage) handles RAW (.ARW etc.) robustly and downsamples
+                    // during decode, so we never fully decode a huge original just to shrink it.
+                    if let cgImage = Self.decodedImage(at: selectedURL, maxPixelSize: max(canvasWidth, canvasHeight)) {
+                        let decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
+                        // Animate the append so the "Clear Imports" button's
+                        // transition plays when the first image arrives
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                            self.imageList.append(decoded);
+                        }
+                        importedCount += 1;
+                    }
+                    status.setProgress(Double(processed) / Double(selectedURLs.count));
+                    status.setStatusMessage("Importing image \(processed) of \(selectedURLs.count)");
+                }
+            }
+            await MainActor.run {
+                let totalCount = self.imageList.count;
+                let noun = importedCount == 1 ? "image" : "images";
+                status.setPhase(to: .finished);
+                status.setProgress(PROGRESS_END);
+                if previousCount > 0 {
+                    // Appended to an existing set, report the delta and the running total
+                    status.setStatusMessage("Imported \(importedCount) more \(noun), \(totalCount) total");
+                } else {
+                    status.setStatusMessage("Importing complete, \(importedCount) \(noun) imported");
+                }
             }
         }
     }
@@ -444,6 +466,43 @@ class ImageModel: PHPickerViewControllerDelegate {
                 status.setStatusMessage("Similarity Check Complete!");
             }
         }
+    }
+
+    // MARK: - Source resolution
+
+    /// Flattens a mix of file and folder URLs into a de-duplicated list of image files. Folders are walked
+    /// recursively; anything that isn't a readable image (by uniform type) is skipped. Order follows the
+    /// input, with each folder's contents in enumeration order
+    /// - Parameter inputURLs: the files and/or folders to resolve
+    /// - Returns: the image file URLs found
+    private static func imageFileURLs(from inputURLs: [URL]) -> [URL] {
+        let fileManager = FileManager.default;
+        var result: [URL] = [];
+        var seen = Set<URL>(); // guards against duplicates (e.g. a file dropped alongside its folder)
+        for url in inputURLs {
+            var isDir: ObjCBool = false;
+            guard fileManager.fileExists(atPath: url.path, isDirectory: &isDir) else { continue; }
+            if isDir.boolValue {
+                let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey];
+                // Recurse into subfolders automatically; skip hidden files/packages
+                guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: keys,
+                                                              options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue; }
+                for case let child as URL in enumerator where Self.isImageFile(child) {
+                    if seen.insert(child.standardizedFileURL).inserted { result.append(child); }
+                }
+            } else if Self.isImageFile(url) {
+                if seen.insert(url.standardizedFileURL).inserted { result.append(url); }
+            }
+        }
+        return result;
+    }
+
+    /// Whether the URL points at a regular file whose uniform type conforms to `public.image`
+    private static func isImageFile(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentTypeKey]),
+              values.isRegularFile == true,
+              let type = values.contentType else { return false; }
+        return type.conforms(to: .image);
     }
 
     // MARK: - Decoding helpers
