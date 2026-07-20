@@ -14,16 +14,12 @@ struct ControlSideBar : View {
     let model: ImageModel;
     let status : AppStatusModel;
     let znccObj : ZNCCModel;
+    @Binding var maxCanvasDim : Double;
     // Drives the confirmation alert shown when importing over existing images
     @State private var showImportConfirm : Bool = false;
     // Same, but for the photo-library (PhotoKit) import path
     @State private var showPhotoConfirm : Bool = false;
-
-    // The comparison canvas is capped to this many pixels per side. Duplicate detection doesn't need full
-    // resolution, and every image is decoded/resampled/compared at the canvas size so this bounds the
-    // memory per image (canvas^2 * 4 bytes) regardless of how large the originals (e.g. RAW) are. Tune for
-    // the quality/memory trade-off: larger = more detail, more memory
-    @State private var maxCanvasDim : Double = 512;
+    
 
     /// Opens the Finder panel to import images (wrapped so both the button and alert can call it)
     private func startImport() {
@@ -181,15 +177,6 @@ struct ControlSideBar : View {
         .padding()
         .glassEffect(.regular, in: .rect(cornerRadius: 10)) // Use liquid glass material on the VStack behind the content
         .frame(maxHeight: .infinity)
-        // Drag-and-drop: dropping image files and/or folders feeds the same ingest pipeline as the buttons.
-        // importImages expands folders to their images and ignores non-image files, so the view stays thin
-        .dropDestination(for: URL.self) { items, _ in
-            // Ignore drops while another operation is running, or if nothing usable was dropped
-            guard !status.isBusy, !items.isEmpty else { return false; }
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // Animate in the Clear/Analyze buttons
-                model.importImages(from: items, status, maxCanvasDim: Int(maxCanvasDim));
-            }
-            return true;
-        }
+        .background(Color.white.opacity(0.001))
     }
 }
