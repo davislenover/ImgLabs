@@ -37,6 +37,9 @@ struct DuplicateView : View {
     // Drives the confirmation alert shown before deleting duplicates (file trashing has no OS prompt of its own)
     @State private var showDeleteConfirm : Bool = false;
 
+    // Side length of each duplicate thumbnail. Bumped up so the image groups get plenty of room to breathe
+    private let thumbSize : CGFloat = 172;
+
     // A computed property: it isn't stored, it's recalculated every time it's read (i.e. every `body`
     // evaluation). Because reading it happens during `body`, changing `threshold` re-runs body, which
     // re-reads this and re-clusters with the new threshold
@@ -154,7 +157,7 @@ struct DuplicateView : View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // ForEach builds one view per element. It needs each element to be uniquely
-                        // identifiable so SwiftUI can track them across updates -- DuplicateGroup is
+                        // identifiable so SwiftUI can track them across updates. DuplicateGroup is
                         // Identifiable (its UUID id), so can pass the array directly
                         ForEach(self.groups) { group in
                             self.groupSection(group);
@@ -173,33 +176,25 @@ struct DuplicateView : View {
     // The Export + Delete buttons shown beneath the cluster list
     private var actionBar : some View {
         HStack {
-            Button(action: {
+            // Copy the images being kept (cluster keepers + uniques) to a folder
+            Button {
                 self.exportKeepers();
-            }) {
-                // How the button looks
-                Text("Export \(self.images.count - self.removalCount) Images")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .cornerRadius(10)
+            } label: {
+                Label("Export \(self.images.count - self.removalCount) Keepers", systemImage: "square.and.arrow.up")
             }
+            .buttonStyle(FilledActionButtonStyle(fill: .brandPrimary))
+            .help("Copy every image you're keeping (cluster keepers + uniques) into a folder you choose")
             .disabled(self.status.isBusy) // Prevent re-triggering while another operation runs
 
-            // Delete every flagged duplicate. Shown whenever there are flagged duplicates; confirmed first
-            // because file trashing (unlike PhotoKit deletion) has no system prompt of its own
+            // Delete every flagged duplicate. Shown whenever there are flagged duplicates
             if !self.flaggedDuplicates.isEmpty {
-                Button(role: .destructive, action: {
+                Button {
                     self.showDeleteConfirm = true;
-                }) {
-                    Text("Delete \(self.flaggedDuplicates.count) Duplicates")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .cornerRadius(10)
+                } label: {
+                    Label("Delete \(self.flaggedDuplicates.count) Duplicates", systemImage: "trash")
                 }
-                .tint(.red)
+                .buttonStyle(FilledActionButtonStyle(fill: .red))
+                .help("Move the flagged duplicates to the Trash / Recently Deleted (both recoverable)")
                 .disabled(self.status.isBusy)
                 .alert("Delete \(self.flaggedDuplicates.count) duplicates?", isPresented: $showDeleteConfirm) {
                     Button("Cancel", role: .cancel) { }
@@ -216,6 +211,7 @@ struct DuplicateView : View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Duplicates")
                 .font(.system(size: 32, weight: .black))
+                .foregroundStyle(.brandPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading);
 
             // A summary of the current clustering
@@ -223,27 +219,39 @@ struct DuplicateView : View {
                 .font(.headline)
                 .foregroundStyle(.secondary);
 
-            // Slider binds to $threshold. The `$` makes a two-way Binding: the slider both reads the
-            // current value and writes new ones back into @State, which re-runs body
-            HStack {
-                Text("Sensitivity");
-                Slider(value: $threshold, in: 0.5...1.0);
-                // Show the threshold as a percentage (e.g. 95%)
-                Text(self.threshold, format: .percent.precision(.fractionLength(0)))
-                    .monospacedDigit() // keeps the number from shifting width as it changes
-                    .frame(width: 44, alignment: .trailing);
+            // Pixel-similarity threshold
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Sensitivity")
+                        .font(.subheadline.bold());
+                    Spacer();
+                    // Show the threshold as a percentage (e.g. 95%)
+                    Text(self.threshold, format: .percent.precision(.fractionLength(0)))
+                        .font(.caption).monospacedDigit().foregroundStyle(.brandPrimary); // steady width as it changes
+                }
+                Slider(value: $threshold, in: 0.5...1.0)
+                    .tint(.brandSecondary)
+                    .help("How alike two images must be (by pixel correlation) to be grouped as duplicates");
+                Text("Higher groups only very-close matches; lower catches looser look-alikes.")
+                    .font(.caption2).foregroundStyle(.secondary);
             }
 
-            // Perceptual-hash tolerance. Only meaningful when the Hamming matrix is available; hidden
-            // otherwise so it never implies a control that does nothing. Higher = matches more differing bits
+            // Perceptual-hash tolerance
             if self.hammingMatrix.count == self.matrix.count {
-                HStack {
-                    Text("Hash tolerance");
-                    Slider(value: $hashThreshold, in: 0...16, step: 1);
-                    // Show the current cutoff as "<= N bits" (out of 64)
-                    Text("\u{2264} \(Int(self.hashThreshold)) bits")
-                        .monospacedDigit() // keeps the number from shifting width as it changes
-                        .frame(width: 60, alignment: .trailing);
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Hash tolerance")
+                            .font(.subheadline.bold());
+                        Spacer();
+                        // Show the current cutoff as "<= N bits" (out of 64)
+                        Text("\u{2264} \(Int(self.hashThreshold)) bits")
+                            .font(.caption).monospacedDigit().foregroundStyle(.brandPrimary);
+                    }
+                    Slider(value: $hashThreshold, in: 0...16, step: 1)
+                        .tint(.brandSecondary)
+                        .help("How many of the 64 perceptual-hash bits may differ and still count as a near-duplicate");
+                    Text("Catches crops, recompression and colour shifts that pixel matching can miss.")
+                        .font(.caption2).foregroundStyle(.secondary);
                 }
             }
         }
@@ -258,11 +266,11 @@ struct DuplicateView : View {
                 .foregroundStyle(.secondary);
 
             // A grid that flows thumbnails and wraps automatically. `adaptive` fits as many
-            // columns of ~120pt as the width allows.
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
+            // columns of ~thumbSize as the (now edge-to-edge) width allows.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: thumbSize), spacing: 16)], spacing: 16) {
                 // The keeper first, then the duplicates
                 self.thumbnail(for: group.keep, isKeeper: true, keeperIndex: group.keep);
-                // ForEach over plain Ints needs an explicit id since Int isn't Identifiable on its own;
+                // ForEach over plain Ints needs an explicit id since Int isn't Identifiable on its own
                 // \.self uses the value itself as the identity
                 ForEach(group.duplicates, id: \.self) { index in
                     self.thumbnail(for: index, isKeeper: false, keeperIndex: group.keep);
@@ -289,13 +297,22 @@ struct DuplicateView : View {
                         .foregroundStyle(.secondary);
                 }
             }
-            .frame(width: 120, height: 120)
+            .frame(width: thumbSize, height: thumbSize)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 // Green outline for the image kept, red for ones suggested for removal
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(isKeeper ? Color.green : Color.red, lineWidth: 3)
             );
+
+            // The image's file name (the real name for both file and library imports). Middle-truncated so the
+            // extension stays visible, full name on hover
+            Text(self.images[index].getURL().lastPathComponent)
+                .font(.caption2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: thumbSize)
+                .help(self.images[index].getURL().lastPathComponent);
 
             if isKeeper {
                 Label("Keep", systemImage: "checkmark.circle.fill")

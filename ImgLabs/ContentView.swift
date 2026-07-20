@@ -141,22 +141,36 @@ struct ContentView: View { // This a custom view, it conatains a body
     }
 
     var body: some View { // some means that body returns an object which conforms to the View type (i.e., don't need to specify exactly what is returned)
-        HStack {
+        HStack(spacing: 0) {
+            // Main content area: fills to the window edges (its own material surface)
             ImageGridPane(model: self.model, status: self.status, znccObj: self.znccObj)
+            // Inspector: a fixed-width glass panel floating over the gradient, framed by a margin on 3 sides.
+            // Pinning the width keeps the results area as wide as possible and stops the sidebar reflowing
             ControlSideBar(model: self.model, status: self.status, znccObj: self.znccObj, maxCanvasDim: $maxCanvasDim)
+                .frame(width: 400)
+                .padding(14)
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 0, style: .continuous))
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL, .folder, .image], isTargeted: $isDraggingOver) { providers in
             handleDrop(providers: providers);
         }
         .overlay {
             if isDraggingOver {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8]))
-                    .padding(8)
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(Color.brandAccent, style: StrokeStyle(lineWidth: 3, dash: [8]))
+                    .padding(6)
                     .allowsHitTesting(false);
             }
+        }
+        // Tint the window
+        .background {
+            ZStack {
+                Color(nsColor: .windowBackgroundColor);
+                LinearGradient(colors: [Color.brandSecondary, Color.brandAccent],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .opacity(0.28);
+            }
+            .ignoresSafeArea();
         };
     }
 }

@@ -35,11 +35,12 @@ struct ImageGridPane : View {
                 self.stateIndicator(icon: "photo.on.rectangle.angled", message: "Import photos and press Analyze to find duplicates");
             }
         }
-        // Fill the available space BEFORE the glass background, so the glass keeps the full pane size
-        // regardless of how little content is inside it (otherwise it shrinks to fit the content)
+        // Fill the available space, then sit on a full-bleed material surface: this is the
+        // edge-to-edge main content area, with only the sidebar floating as a glass inspector. The material
+        // keeps text/thumbnails readable instead of placing them directly on the window gradient
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-        .glassEffect(.regular, in: .rect(cornerRadius: 10))
+        .background(.regularMaterial)
     }
 
     // A centered, animated placeholder used for the "calculating" and "empty" states
