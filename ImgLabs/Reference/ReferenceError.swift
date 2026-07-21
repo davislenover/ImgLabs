@@ -11,5 +11,6 @@ public enum ReferenceError: Error {
     case invalidLibraryDirectory;
     case invalidReferenceLibraryFile(String);
     case invalidAppSupportDirectory;
+    case referenceLibraryNotFound(UUID);
 }
 

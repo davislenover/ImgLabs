@@ -60,7 +60,7 @@ public actor ReferenceManager {
     /// Gets a specific ReferenceLibraryObject from it's UUID
     public func getReferenceLibrary(_ id: UUID) throws -> ReferenceLibrary? {
         if try self.doesReferenceLibraryExist(id) {
-            guard let libraryURL : URL  = self.appSupportDirectory?.appendingPathComponent(ReferenceDirectory.REFERENCES_LIBRARIES.rawValue).appendingPathComponent(id.uuidString) else {
+            guard let libraryURL : URL  = self.appSupportDirectory?.appendingPathComponent(ReferenceDirectory.REFERENCES_LIBRARIES.rawValue).appendingPathComponent(id.uuidString).appendingPathExtension("json") else {
                 return nil;
             }
             let decoder = JSONDecoder();
@@ -108,6 +108,26 @@ public actor ReferenceManager {
         return library;
     }
     
+    /// Re-scans a stored library against the current state of disk and persists any changes.
+    /// Loads the library fresh from disk, re-hashes only new/modified files via the indexer, and commits the
+    /// result only when something actually changed
+    /// - Parameters:
+    ///     - id: the library to re-scan
+    ///     - indexer: builds/re-hashes reference entries (owns the Metal context)
+    /// - Returns: the updated library when changes were written, or nil when nothing changed
+    /// - Throws: `referenceLibraryNotFound` if no library with that id is stored
+    public func rescanReferenceLibrary(_ id: UUID, _ indexer: ReferenceIndexer) async throws -> ReferenceLibrary? {
+        guard let library : ReferenceLibrary = try self.getReferenceLibrary(id) else {
+            throw ReferenceError.referenceLibraryNotFound(id);
+        }
+        // rescan returns nil when nothing on disk changed, so there's nothing to persist
+        guard let updated : ReferenceLibrary = try await indexer.rescan(library) else {
+            return nil;
+        }
+        try self.commitReferenceLibrary(updated);
+        return updated;
+    }
+
     /// Commit changes to a given ReferenceLibrary
     public func commitReferenceLibrary(_ library: ReferenceLibrary) throws {
         let encoder : JSONEncoder = JSONEncoder();

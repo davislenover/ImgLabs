@@ -45,9 +45,22 @@ Heading toward a v1 App Store release (free)
 | 5 | Photos library support (PhotoKit) | In Progress | 8 | Permission flow + fetch + delete (goes to Recently Deleted) complete, to test                                                                      |
 | 6 | Drag-and-drop folder scan         | In Progress | 8 | Drop on window wtih effects complete, to test                                                                           |
 | 7 | Review UI                         | In Progress | 1–6 | Added help hints and more context to buttons/sliders, re-did color palette                                                                     |
-| 8 | App sandbox + entitlements        | In progress | — | Need access to full library, on-going updating of permissions                                                                                              |
+| 8 | App sandbox + entitlements        | In progress | — | Need access to full library, on-going updating of permissions; app-scope bookmarks entitlement pending (for v1.0 Extended reference libraries) |
 | 9 | App Store assets                  | To do | 7 | Name check, icon, screenshots, description                                                                                       |
 | 10 | Update documentation              | To do | 2–7 | Reconcile README + diagrams with the shipped v1 (perceptual hash + Hamming, keeper logic, Photos/folder input)                   |
+
+### v1.0 Extended — Reference libraries (dedup against a standing library)
+
+Point ImgLabs at a persistent library (e.g. a homelab/NAS folder), then on each import flag the photos that already exist there — so duplicates never get uploaded in the first place. Matching is a pHash Hamming lookup against a saved index (CPU popcount); the library only pays the GPU hashing cost once, then re-scans incrementally.
+
+| # | Task                              | Status | Blocked by | Notes                                                                                                                            |
+| --- | --- | --- | --- |----------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Reference schema + persistence    | Done | — | `ReferenceLibrary` / `LibraryRoot` / `ReferenceEntry`, one JSON per library; `ReferenceManager` create/load/commit (atomic write pending) |
+| 2 | Library indexer (`build`)         | Done | 1 | `ReferenceIndexer.build`: prune nested roots, parallel decode (bounded), chunked GPU pHash → entries + per-root security-scoped bookmark |
+| 3 | Incremental re-scan               | Done | 2 | `ReferenceIndexer.rescan` + `ReferenceManager.rescanReferenceLibrary`: re-hash only new/modified files (size + mtime), drop deleted, refresh stale bookmarks |
+| 4 | App-scope bookmarks entitlement   | In progress | 8 | `com.apple.security.files.bookmarks.app-scope` so picked folders re-resolve across launches; until present, `build`/`rescan` can't reach roots at runtime |
+| 5 | Candidate match query             | To do | 1 | Per-import: Hamming lookup of each imported pHash against the index → "already in library" flags (reuses the run's existing hashes) |
+| 6 | Reference-library UI              | To do | 5 | Create/name a library, add folders, rebuild/rescan, per-image "in library" badge, export "skip already in library" toggle       |
 
 ---
 
