@@ -58,8 +58,8 @@ Point ImgLabs at a persistent library (e.g. a homelab/NAS folder), then on each 
 | 1 | Reference schema + persistence    | Done | — | `ReferenceLibrary` / `LibraryRoot` / `ReferenceEntry`, one JSON per library; `ReferenceManager` create/load/commit (atomic write pending) |
 | 2 | Library indexer (`build`)         | Done | 1 | `ReferenceIndexer.build`: prune nested roots, parallel decode (bounded), chunked GPU pHash → entries + per-root security-scoped bookmark |
 | 3 | Incremental re-scan               | Done | 2 | `ReferenceIndexer.rescan` + `ReferenceManager.rescanReferenceLibrary`: re-hash only new/modified files (size + mtime), drop deleted, refresh stale bookmarks |
-| 4 | App-scope bookmarks entitlement   | In progress | 8 | `com.apple.security.files.bookmarks.app-scope` so picked folders re-resolve across launches; until present, `build`/`rescan` can't reach roots at runtime |
-| 5 | Candidate match query             | To do | 1 | Per-import: Hamming lookup of each imported pHash against the index → "already in library" flags (reuses the run's existing hashes) |
+| 4 | App-scope bookmarks entitlement   | In progress | 8 | `com.apple.security.files.bookmarks.app-scope` picked folders re-resolve across launches `build`/`rescan` can't reach roots at runtime |
+| 5 | Candidate match query             | Done | 1 | `ReferenceManager.checkForReference`: per-candidate parallel Hamming lookup against the index → first entry within tolerance (reuses the run's existing hashes) |
 | 6 | Reference-library UI              | To do | 5 | Create/name a library, add folders, rebuild/rescan, per-image "in library" badge, export "skip already in library" toggle       |
 
 ---

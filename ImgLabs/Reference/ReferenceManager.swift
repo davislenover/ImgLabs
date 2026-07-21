@@ -136,4 +136,42 @@ public actor ReferenceManager {
         let libraryURL : URL = self.appSupportDirectory!.appendingPathComponent(ReferenceDirectory.REFERENCES_LIBRARIES.rawValue).appendingPathComponent(library.id.uuidString).appendingPathExtension("json");
         try data.write(to: libraryURL);
     }
+    
+    /// Checks each candidate pHash for a match in a given ReferenceLibrary (within a Hamming tolerance)
+    /// - Parameters:
+    ///     - pHashes: the candidate image hashes to look up
+    ///     - library: the reference library to match against
+    ///     - bitCountTolarance: max differing bits for a pair to count as a match
+    /// - Returns: a list index-aligned with `pHashes`, each element the first library entry within tolerance
+    ///            of that candidate (nil when none match)
+    public static func checkForReference(_ pHashes : [ImageHash], _ library: ReferenceLibrary, _ bitCountTolarance: UInt8) async -> [ReferenceEntry?] {
+        let entries : [ReferenceEntry] = library.entries;
+        let tolerance : Int = Int(bitCountTolarance);
+
+        // Pull each candidate's 64-bit hash off its actor exactly once (not once per library entry)
+        var candidateValues : [UInt64] = [];
+        candidateValues.reserveCapacity(pHashes.count);
+        for pHash in pHashes {
+            candidateValues.append(await pHash.value());
+        }
+
+        // Each candidate scans the library independently so fan out over candidates and collect results back into their original slots
+        var results : [ReferenceEntry?] = Array<ReferenceEntry?>(repeating: nil, count: pHashes.count);
+        await withTaskGroup(of: (Int, ReferenceEntry?).self) { group in
+            for (index, value) in candidateValues.enumerated() {
+                group.addTask {
+                    for entry in entries {
+                        if (entry.hash ^ value).nonzeroBitCount <= tolerance {
+                            return (index, entry); // first entry within tolerance for this candidate
+                        }
+                    }
+                    return (index, nil);
+                }
+            }
+            for await (index, match) in group {
+                results[index] = match;
+            }
+        }
+        return results;
+    }
 }
