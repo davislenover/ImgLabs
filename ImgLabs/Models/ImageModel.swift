@@ -475,7 +475,7 @@ class ImageModel: PHPickerViewControllerDelegate {
     /// input, with each folder's contents in enumeration order
     /// - Parameter inputURLs: the files and/or folders to resolve
     /// - Returns: the image file URLs found
-    private static func imageFileURLs(from inputURLs: [URL]) -> [URL] {
+    public static func imageFileURLs(from inputURLs: [URL]) -> [URL] {
         let fileManager = FileManager.default;
         var result: [URL] = [];
         var seen = Set<URL>(); // guards against duplicates (e.g. a file dropped alongside its folder)
@@ -588,7 +588,9 @@ class ImageModel: PHPickerViewControllerDelegate {
     ///     - url: the image file to decode
     ///     - maxPixelSize: cap for the largest output dimension (aspect ratio preserved)
     /// - Returns: a decoded CGImage, or nil if the file couldn't be read
-    private static func decodedImage(at url: URL, maxPixelSize: Int) -> CGImage? {
+    /// nonisolated: a pure URL -> CGImage function with no shared state, so the reference indexer can
+    /// run many of these concurrently off the main actor
+    public nonisolated static func decodedImage(at url: URL, maxPixelSize: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil;
         }
