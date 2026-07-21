@@ -58,9 +58,16 @@ public actor ReferenceManager {
     }
     
     /// Gets a specific ReferenceLibraryObject from it's UUID
-    public func getReferenceLibrary(_ id: UUID) -> ReferenceLibrary? {
-        let libraries : [ReferenceLibrary] = (try? self.getAllReferenceLibraries()) ?? [];
-        return libraries.first(where: { $0.id == id });
+    public func getReferenceLibrary(_ id: UUID) throws -> ReferenceLibrary? {
+        if try self.doesReferenceLibraryExist(id) {
+            guard let libraryURL : URL  = self.appSupportDirectory?.appendingPathComponent(ReferenceDirectory.REFERENCES_LIBRARIES.rawValue).appendingPathComponent(id.uuidString) else {
+                return nil;
+            }
+            let decoder = JSONDecoder();
+            return try decoder.decode(ReferenceLibrary.self, from: try Data(contentsOf: libraryURL));
+        } else {
+            return nil;
+        }
     }
     
     /// Checks if a file name within the reference library directory matches a given id
@@ -101,4 +108,12 @@ public actor ReferenceManager {
         return library;
     }
     
+    /// Commit changes to a given ReferenceLibrary
+    public func commitReferenceLibrary(_ library: ReferenceLibrary) throws {
+        let encoder : JSONEncoder = JSONEncoder();
+        encoder.outputFormatting = .prettyPrinted;
+        let data : Data = try encoder.encode(library);
+        let libraryURL : URL = self.appSupportDirectory!.appendingPathComponent(ReferenceDirectory.REFERENCES_LIBRARIES.rawValue).appendingPathComponent(library.id.uuidString).appendingPathExtension("json");
+        try data.write(to: libraryURL);
+    }
 }
