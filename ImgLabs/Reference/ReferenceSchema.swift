@@ -9,7 +9,7 @@
 import Foundation
 
 /// Denotes a directory that is apart of a ReferenceLibrary, Codeable to allow for serialization
-struct LibraryRoot : Codable {
+public nonisolated struct LibraryRoot : Codable, Sendable {
     let id: UUID;
     let bookmark: Data; // security-scoped bookmark to the given directory
     let displayPath: String; // for the UI (is the file path)
@@ -17,7 +17,7 @@ struct LibraryRoot : Codable {
 
 /// Denotes a single image within a LibraryRoot (i.e., a directory contains multiple images, thus a LibraryRoot contains ReferenceEntries)
 /// Houses information about the image, such as it's computed pHash and name
-struct ReferenceEntry: Codable {
+public nonisolated struct ReferenceEntry: Codable, Sendable {
     let hash: UInt64;
     let libraryRootID: UUID; // which root this file lives under
     let relativePath: String; // path within that root
@@ -27,7 +27,7 @@ struct ReferenceEntry: Codable {
 }
 
 /// Denotes a group of LibraryRoots (allows the user to combine library roots into one reference library)
-struct ReferenceLibrary: Codable {
+public nonisolated struct ReferenceLibrary: Codable, Sendable {
     let id: UUID;
     var name: String; // User adjustable
     var roots: [LibraryRoot];
