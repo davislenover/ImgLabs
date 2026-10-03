@@ -133,6 +133,24 @@ enum PerformanceBenchmark {
                 cpuParallelBest = min(cpuParallelBest, Date().timeIntervalSince(start));
             }
         };
+        
+        // SIMD CPU
+        var cpuSIMDBest = Double.greatestFiniteMagnitude;
+        var cpuParallelSIMDBest = Double.greatestFiniteMagnitude;
+        var cpuSIMDMatrix : [Float] = [];
+        let cpuSIMDPeak = await Self.measuringPeakFootprint {
+            let prepared = images.map { Self.prepareAccelerate($0) };
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                cpuSIMDMatrix = Self.cpuSimilarityMatrixSIMD(prepared);
+                cpuSIMDBest = min(cpuBest, Date().timeIntervalSince(start));
+            }
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                _ = Self.cpuSimilarityMatrixParallelSIMD(prepared);
+                cpuParallelSIMDBest = min(cpuParallelBest, Date().timeIntervalSince(start));
+            }
+        };
 
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
@@ -237,6 +255,39 @@ enum PerformanceBenchmark {
             DispatchQueue.concurrentPerform(iterations: n) { i in
                 for j in 0...i {
                     let zncc = Self.zncc(prepared[i], prepared[j]);
+                    buffer[i * n + j] = zncc;
+                    buffer[j * n + i] = zncc;
+                }
+            }
+        }
+        return flat;
+    }
+    
+    // MARK: - SIMD Versions for CPU
+    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it.
+    /// Uses znccAccelerate
+    private static func cpuSimilarityMatrixSIMD(_ prepared: [Prepared]) -> [Float] {
+        let n = prepared.count;
+        var matrix = [Float](repeating: 0, count: n * n);
+        for i in 0..<n {
+            for j in 0...i {
+                let zncc = Self.znccAccelerate(prepared[i], prepared[j]);
+                matrix[i * n + j] = zncc;
+                matrix[j * n + i] = zncc;
+            }
+        }
+        return matrix;
+    }
+
+    /// Multi-threaded reference: the same computation with the rows fanned across all cores via
+    /// DispatchQueue.concurrentPerform. Uses znccAccelerate
+    private static func cpuSimilarityMatrixParallelSIMD(_ prepared: [Prepared]) -> [Float] {
+        let n = prepared.count;
+        var flat = [Float](repeating: 0, count: n * n);
+        flat.withUnsafeMutableBufferPointer { buffer in
+            DispatchQueue.concurrentPerform(iterations: n) { i in
+                for j in 0...i {
+                    let zncc = Self.znccAccelerate(prepared[i], prepared[j]);
                     buffer[i * n + j] = zncc;
                     buffer[j * n + i] = zncc;
                 }
