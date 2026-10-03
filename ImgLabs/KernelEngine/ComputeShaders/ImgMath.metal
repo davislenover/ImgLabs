@@ -9,8 +9,8 @@
 // Define offsets per pixel
 constant uint8_t ALPHA_IDX = 3;
 constant uint8_t RED_IDX = 0;
-constant uint8_t BLUE_IDX = 1;
-constant uint8_t GREEN_IDX = 2;
+constant uint8_t GREEN_IDX = 1;
+constant uint8_t BLUE_IDX = 2;
 constant uint8_t MAX_COLOR_VAL = 255;
 /*
  Takes R,G,B values in separate arrays, applies weights to produce a grayscale number, asumes 8-bits per channel

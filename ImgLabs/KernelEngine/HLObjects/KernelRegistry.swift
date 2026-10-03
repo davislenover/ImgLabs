@@ -3,22 +3,7 @@
 //  ImgLabs
 //
 //  Created by Davis Lenover on 2026-07-03.
-//  Denotes an actor which houses ComputeKernel object creation functions to an associated string
-
-internal final actor KernelRegistry {
-    private var kernels: [String: ComputeKernelCreatable] = [:]
-    
-    public func registerKernel(kernelFactory : ComputeKernelCreatable) {
-        self.kernels[type(of:kernelFactory).getFactoryName()] = kernelFactory;
-    }
-    
-    public func getKernel(name: String) async throws -> (MTBufable,MetalComputeContext) async throws -> any ComputeKernel {
-        guard let kernel = self.kernels[name] else {
-            throw KernelEngineError.failedToFindKernelCreateFunction(name: name);
-        }
-        return kernel.createKernel;
-    }
-}
+//  Houses logic which handles classes that know how to create a kernel
 
 public protocol ComputeKernelCreatable {
     static nonisolated func getFactoryName() -> String;
