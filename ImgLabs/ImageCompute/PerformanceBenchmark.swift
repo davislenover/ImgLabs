@@ -109,8 +109,8 @@ enum PerformanceBenchmark {
     /// Runs the benchmark end to end against a supplied set of images (e.g. the user's imported photos, or
     /// synthetic ones from `syntheticImages`). Every path scores the very same pixels
     /// - Parameters:
-    ///     - images: The images to compare; the matrix is images.count x images.count (needs at least two)
-    ///     - runs: How many timed passes to take per path; the fastest (least noisy) is reported
+    ///     - images: The images to compare. At least two images must be present
+    ///     - runs: How many timed passes to take per path. Fastest is reported
     ///     - context: The Metal context the GPU path runs against
     /// - Returns: A Result, or nil if fewer than two images were given or the GPU run could not be produced
     static func run(images: [ImageData], runs: Int = 3, context: MetalComputeContext) async -> Result? {
@@ -119,6 +119,8 @@ enum PerformanceBenchmark {
         let canvas = images.first?.currentSize()?.width ?? 0;
         let cores = ProcessInfo.processInfo.activeProcessorCount;
         let correlation = ImageCorrelation(MetalContext: context);
+        // Let any memory still being released (e.g. from the import) drain before taking the baseline
+        await Self.waitForFootprintToSettle();
         let baseline = Self.currentFootprintBytes();
 
         // GPU path (cold + warm), with peak memory sampled across the whole section. The first run compiles
@@ -139,8 +141,10 @@ enum PerformanceBenchmark {
         };
         guard !gpuMatrix.isEmpty else { return nil; }
 
-        // CPU paths (single- and multi-threaded), with their own peak-memory section. The mean-centered arrays
+        // CPU paths (single and multi-threaded), with their own peak-memory section. The mean-centered arrays
         // built by prepare() are the dominant CPU allocation, so they are included in the measured window
+        // Wait for the GPU section's buffers to finish releasing first, so they don't inflate this section's start
+        await Self.waitForFootprintToSettle();
         var cpuBest = Double.greatestFiniteMagnitude;
         var cpuParallelBest = Double.greatestFiniteMagnitude;
         var cpuMatrix : [Float] = [];
@@ -158,7 +162,8 @@ enum PerformanceBenchmark {
             }
         };
         
-        // SIMD CPU
+        // SIMD CPU (settle first so the scalar section's prepared arrays have been released)
+        await Self.waitForFootprintToSettle();
         var cpuSIMDBest = Double.greatestFiniteMagnitude;
         var cpuParallelSIMDBest = Double.greatestFiniteMagnitude;
         var cpuSIMDMatrix : [Float] = [];
@@ -404,6 +409,24 @@ enum PerformanceBenchmark {
         await tracker.consider(Self.currentFootprintBytes());
         sampler.cancel();
         return (start: start, peak: await tracker.peak);
+    }
+
+    /// Waits until the process footprint stops falling, so memory an earlier section is still releasing isn't
+    /// counted in the next section's starting point. Polls every `intervalNanoseconds` and returns once a reading
+    /// has dropped by no more than `tolerance` since the previous one (or risen), giving up after `maxAttempts`
+    private static func waitForFootprintToSettle(tolerance: UInt64 = 50 * 1024 * 1024,
+                                                 intervalNanoseconds: UInt64 = 100_000_000,
+                                                 maxAttempts: Int = 50) async {
+        var previous : UInt64 = Self.currentFootprintBytes();
+        for _ in 0..<maxAttempts {
+            try? await Task.sleep(nanoseconds: intervalNanoseconds); // 100 ms by default, so 5s at most
+            let current : UInt64 = Self.currentFootprintBytes();
+            // Check previous <= current first so the subtraction below can't underflow
+            if previous <= current || previous - current <= tolerance {
+                return;
+            }
+            previous = current;
+        }
     }
 
     /// The current process memory footprint in bytes (phys_footprint — the same figure Xcode's memory gauge
