@@ -43,7 +43,7 @@ enum PerformanceBenchmark {
         let baselineBytes : UInt64;     // Process footprint before either path allocated its working set
         let gpuPeakBytes : UInt64;      // Peak process footprint observed during the GPU path
         let cpuPeakBytes : UInt64;      // Peak process footprint observed during the CPU paths
-        let maxAbsDifference : Float;   // Largest disagreement between the GPU and CPU matrices (should be ~0)
+        let maxAbsDifference : (Float,Float,Float);   // Largest disagreement between the paths
 
         var speedup : Double { self.cpuSeconds / self.gpuSeconds; }                         // warm GPU vs 1-thread CPU
         var coldSpeedup : Double { self.cpuSeconds / self.gpuColdSeconds; }                 // cold GPU vs 1-thread CPU
@@ -80,7 +80,7 @@ enum PerformanceBenchmark {
               GPU peak      : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta))
               CPU peak      : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta))
               — Accuracy —
-              Max |Δ|       : \(String(format: "%.2e", self.maxAbsDifference)) (GPU vs CPU agreement)
+              Max |Δ|       : \(String(format: "%.2e", self.maxAbsDifference.0)) (GPU vs CPU agreement)
             ───────────────────────────────────────────────────────
             """;
         }
@@ -160,7 +160,7 @@ enum PerformanceBenchmark {
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
                       cpuSeconds: cpuBest, cpuSIMDSeconds: cpuSIMDBest, cpuParallelSeconds: cpuParallelBest, cpuParallelSIMDSeconds: cpuParallelSIMDBest,
                       baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak,
-                      maxAbsDifference: Self.maxAbsDifference(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
+                      maxAbsDifference: Self.maxAbsDifferencePerPath(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
     }
 
     /// Builds a set of synthetic random images at the given canvas size. Used as a fallback for the benchmark
@@ -327,6 +327,16 @@ enum PerformanceBenchmark {
             worst = max(worst, abs(first[i] - second[i]), abs(first[i] - third[i]), abs(second[i] - third[i]));
         }
         return worst;
+    }
+    
+    /// Returns largest disagreement between 3 paths as a tuple as measured by: first vs second, second vs third, first vs third
+    /// Ex: first = GPU, second = CPU, third = CPU SIMD
+    private static func maxAbsDifferencePerPath(_ first: [Float], _ second: [Float], _ third: [Float]) -> (Float,Float,Float) {
+        guard first.count == second.count, second.count == third.count else { return (.greatestFiniteMagnitude,.greatestFiniteMagnitude,.greatestFiniteMagnitude); }
+        let firstVsSecond : Float = vDSP.maximumMagnitude(vDSP.subtract(first, second)); // GPU vs CPU
+        let secondVsThird : Float = vDSP.maximumMagnitude(vDSP.subtract(second, third)); // CPU vs CPU SIMD
+        let firstVsThird : Float = vDSP.maximumMagnitude(vDSP.subtract(first, third)); // GPU vs CPU SIMD
+        return (firstVsSecond,secondVsThird,firstVsThird);
     }
 
     /// Generates a random opaque RGBA image at the given size. Content is irrelevant to timing; alpha is fixed
