@@ -12,6 +12,7 @@ import Foundation
 import CoreGraphics
 import Metal
 import Darwin // mach task_info, for reading the process memory footprint
+import Accelerate
 
 enum PerformanceBenchmark {
 
@@ -182,6 +183,29 @@ enum PerformanceBenchmark {
             sumSquares += centered * centered;
         }
         return Prepared(centered: gray, sumSquares: sumSquares);
+    }
+    
+    private static func prepareAccelerate(_ image: ImageData) -> Prepared {
+        // rgba is an array of uint8 values
+        guard let rgba = image.rawRGBA() else { return Prepared(centered: [], sumSquares: 0); }
+        let pixelCount = rgba.count / 4;
+        // Grayscale: weighted sum of the (premultiplied) RGB channels, matching the Metal kernel
+        var gray = [Float](repeating: 0, count: pixelCount);
+        var sum : Float = 0;
+        for i in 0..<pixelCount {
+            let base = i * 4;
+            let value = Self.redWeight   * Float(rgba[base])
+                      + Self.greenWeight * Float(rgba[base + 1])
+                      + Self.blueWeight  * Float(rgba[base + 2]);
+            gray[i] = value;
+            sum += value;
+        }
+        let mean = pixelCount > 0 ? sum / Float(pixelCount) : 0;
+        
+        // Need centered values and sum of squares
+        gray = vDSP.add((-1)*mean,gray);
+        let sumSquareTotal : Float = vDSP.dot(gray, gray);
+        return Prepared(centered: gray, sumSquares: sumSquareTotal);
     }
 
     /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it.
