@@ -186,22 +186,24 @@ enum PerformanceBenchmark {
     }
     
     private static func prepareAccelerate(_ image: ImageData) -> Prepared {
+        let STRIDE : Int = 4;
         // rgba is an array of uint8 values
         guard let rgba = image.rawRGBA() else { return Prepared(centered: [], sumSquares: 0); }
         let pixelCount = rgba.count / 4;
-        // Grayscale: weighted sum of the (premultiplied) RGB channels, matching the Metal kernel
-        var gray = [Float](repeating: 0, count: pixelCount);
-        var sum : Float = 0;
-        for i in 0..<pixelCount {
-            let base = i * 4;
-            let value = Self.redWeight   * Float(rgba[base])
-                      + Self.greenWeight * Float(rgba[base + 1])
-                      + Self.blueWeight  * Float(rgba[base + 2]);
-            gray[i] = value;
-            sum += value;
+        // Get individual channels as floating point values
+        // Pixels are stored as R,G,B,A so R is base, G is base + 1, B is base + 2
+        var red : [Float] = .init(repeating: 0, count: pixelCount);
+        var green : [Float] = .init(repeating: 0, count: pixelCount);
+        var blue : [Float] = .init(repeating: 0, count: pixelCount);
+        rgba.withUnsafeBufferPointer { src in
+            // Take every color channel from rgba, copy it to a float point value and store in respective channel array
+            vDSP_vfltu8(src.baseAddress!, STRIDE, &red, 1, vDSP_Length(pixelCount));
+            vDSP_vfltu8(src.baseAddress! + 1, STRIDE, &green, 1, vDSP_Length(pixelCount));
+            vDSP_vfltu8(src.baseAddress! + 2, STRIDE, &blue, 1, vDSP_Length(pixelCount));
         }
-        let mean = pixelCount > 0 ? sum / Float(pixelCount) : 0;
-        
+        // Grayscale: weighted sum of the (premultiplied) RGB channels, matching the Metal kernel
+        var gray : [Float] = vDSP.add(multiplication: (red,Self.redWeight), vDSP.add(multiplication: (green,Self.greenWeight), vDSP.multiply(Self.blueWeight, blue)));
+        let mean : Float = vDSP.mean(gray);
         // Need centered values and sum of squares
         gray = vDSP.add((-1)*mean,gray);
         let sumSquareTotal : Float = vDSP.dot(gray, gray);
