@@ -37,7 +37,9 @@ enum PerformanceBenchmark {
         let gpuColdSeconds : Double;    // First GPU run, including one-time pipeline compilation & buffer setup
         let gpuSeconds : Double;        // Warm GPU run (best of the timed passes, pipelines already compiled)
         let cpuSeconds : Double;        // Single-threaded CPU (best of timed passes)
-        let cpuParallelSeconds : Double;// Multi-threaded CPU across all cores (best of timed passes)
+        let cpuSIMDSeconds : Double;    // Single-threaded CPU SIMD (best of timed passes)
+        let cpuParallelSeconds : Double; // Multi-threaded CPU across all cores (best of timed passes)
+        let cpuParallelSIMDSeconds : Double; // Multi-threaded CPU SIMD across all cores (best of timed passes)
         let baselineBytes : UInt64;     // Process footprint before either path allocated its working set
         let gpuPeakBytes : UInt64;      // Peak process footprint observed during the GPU path
         let cpuPeakBytes : UInt64;      // Peak process footprint observed during the CPU paths
@@ -45,8 +47,10 @@ enum PerformanceBenchmark {
 
         var speedup : Double { self.cpuSeconds / self.gpuSeconds; }                         // warm GPU vs 1-thread CPU
         var coldSpeedup : Double { self.cpuSeconds / self.gpuColdSeconds; }                 // cold GPU vs 1-thread CPU
+        var coldSIMDSpeedup : Double { self.cpuSIMDSeconds / self.gpuColdSeconds; }         // cold GPU vs 1-thread CPU using optimized math libraries
         var parallelSpeedup : Double { self.cpuParallelSeconds / self.gpuSeconds; }         // warm GPU vs N-thread CPU
         var coldParallelSpeedup : Double { self.cpuParallelSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU
+        var coldSIMDParallelSpeedup : Double { self.cpuParallelSIMDSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU using optimized math libraries
 
         /// A one-line summary suitable for a status label
         var summary : String {
@@ -143,20 +147,20 @@ enum PerformanceBenchmark {
             for _ in 0..<max(1, runs) {
                 let start = Date();
                 cpuSIMDMatrix = Self.cpuSimilarityMatrixSIMD(prepared);
-                cpuSIMDBest = min(cpuBest, Date().timeIntervalSince(start));
+                cpuSIMDBest = min(cpuSIMDBest, Date().timeIntervalSince(start));
             }
             for _ in 0..<max(1, runs) {
                 let start = Date();
                 _ = Self.cpuSimilarityMatrixParallelSIMD(prepared);
-                cpuParallelSIMDBest = min(cpuParallelBest, Date().timeIntervalSince(start));
+                cpuParallelSIMDBest = min(cpuParallelSIMDBest, Date().timeIntervalSince(start));
             }
         };
 
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
-                      cpuSeconds: cpuBest, cpuParallelSeconds: cpuParallelBest,
+                      cpuSeconds: cpuBest, cpuSIMDSeconds: cpuSIMDBest, cpuParallelSeconds: cpuParallelBest, cpuParallelSIMDSeconds: cpuParallelSIMDBest,
                       baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak,
-                      maxAbsDifference: Self.maxAbsDifference(gpuMatrix, cpuMatrix));
+                      maxAbsDifference: Self.maxAbsDifference(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
     }
 
     /// Builds a set of synthetic random images at the given canvas size. Used as a fallback for the benchmark
@@ -314,11 +318,13 @@ enum PerformanceBenchmark {
 
     // MARK: - Helpers
 
-    private static func maxAbsDifference(_ lhs: [Float], _ rhs: [Float]) -> Float {
-        guard lhs.count == rhs.count else { return .greatestFiniteMagnitude; }
+    /// The largest disagreement between any two of the three matrices (GPU, CPU, CPU SIMD), element by element.
+    /// Returns greatestFiniteMagnitude if the matrices aren't all the same size
+    private static func maxAbsDifference(_ first: [Float], _ second: [Float], _ third: [Float]) -> Float {
+        guard first.count == second.count, second.count == third.count else { return .greatestFiniteMagnitude; }
         var worst : Float = 0;
-        for i in 0..<lhs.count {
-            worst = max(worst, abs(lhs[i] - rhs[i]));
+        for i in 0..<first.count {
+            worst = max(worst, abs(first[i] - second[i]), abs(first[i] - third[i]), abs(second[i] - third[i]));
         }
         return worst;
     }
