@@ -133,10 +133,10 @@ class ImageModel: PHPickerViewControllerDelegate {
             //    preferredAssetRepresentationMode = .current means these are the asset's original encodings
             //    (RAW/HEIC/JPEG as stored), matching what the file-picker path reads off disk
             var loaded : [(data: Data, name: String, assetID: String?)] = [];
-            for (index, pick) in picks.enumerated() {
-                await MainActor.run {
-                    status?.setStatusMessage("Loading photo \(index + 1) of \(picks.count)...");
-                }
+            await MainActor.run {
+                status?.setStatusMessage("Loading photos...");
+            }
+            for (_,pick) in picks.enumerated() {
                 guard let data = try? await Self.loadImageData(from: pick.provider) else { continue; }
                 // Prefer the asset's real original filename (correct extension -> accurate format rank);
                 // fall back to the provider's suggested name, then a synthesized one
@@ -207,10 +207,7 @@ class ImageModel: PHPickerViewControllerDelegate {
                         // Library assets have no persistent file URL, synthesize one from the filename
                         let placeholderURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(item.name);
                         let decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: placeholderURL, assetIdentifier: item.assetID);
-                        // Animate the append so the "Clear Imports" button's transition plays when the first image arrives
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                            self.imageList.append(decoded);
-                        }
+                        self.imageList.append(decoded);
                         importedCount += 1;
                     }
                     status?.setProgress(Double(processed) / Double(loaded.count));
@@ -348,11 +345,7 @@ class ImageModel: PHPickerViewControllerDelegate {
                     // during decode, so we never fully decode a huge original just to shrink it.
                     if let cgImage = Self.decodedImage(at: selectedURL, maxPixelSize: max(canvasWidth, canvasHeight)) {
                         let decoded = ImageData(img: cgImage, targetWidth: canvasWidth, targetHeight: canvasHeight, filePath: selectedURL);
-                        // Animate the append so the "Clear Imports" button's
-                        // transition plays when the first image arrives
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                            self.imageList.append(decoded);
-                        }
+                        self.imageList.append(decoded);
                         importedCount += 1;
                     }
                     status.setProgress(Double(processed) / Double(selectedURLs.count));

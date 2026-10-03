@@ -65,18 +65,14 @@ class AppStatusModel {
     }
 
     func setStatusMessage(_ msg: String) {
-        withAnimation {
-            self.statusMessage = msg;
-        }
+        self.statusMessage = msg;
     }
 
     func setProgress(_ progress: Double) {
-        withAnimation {
-            if (!self.isProgressVisible) {
-                self.isProgressVisible = true;
-            }
-            self.progress = progress;
+        if (!self.isProgressVisible) {
+            self.isProgressVisible = true;
         }
+        self.progress = progress;
     }
 }
 

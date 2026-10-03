@@ -190,11 +190,5 @@ struct ControlSideBar : View {
         }
         .padding()
         .frame(maxHeight: .infinity)
-        // Glass as a BACKGROUND layer (not a parent of the content). This is the key to the slide-in fix: the
-        // buttons above are siblings drawn over the glass, so inserting/removing them no longer animates
-        // subviews *inside* the visual-effect view -- which is what caused the AppKit constraint loop
-        .background {
-            Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 10));
-        }
     }
 }
