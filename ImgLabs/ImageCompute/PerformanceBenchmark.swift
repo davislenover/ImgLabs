@@ -251,6 +251,13 @@ enum PerformanceBenchmark {
         let denom = (a.sumSquares * b.sumSquares).squareRoot();
         return denom > 0 ? dot / denom : 0;
     }
+    
+    private static func znccAccelerate(_ a: Prepared, _ b: Prepared) -> Float {
+        var dot : Float = 0;
+        dot = vDSP.dot(a.centered, b.centered);
+        let denom = (a.sumSquares * b.sumSquares).squareRoot();
+        return denom > 0 ? dot / denom : 0;
+    }
 
     // MARK: - Helpers
 
