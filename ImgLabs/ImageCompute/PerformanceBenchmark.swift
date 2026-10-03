@@ -44,6 +44,9 @@ enum PerformanceBenchmark {
         let gpuPeakBytes : UInt64;      // Peak process footprint observed during the GPU path
         let cpuPeakBytes : UInt64;      // Peak process footprint observed during the scalar CPU paths
         let cpuSIMDPeakBytes : UInt64;  // Peak process footprint observed during the SIMD (Accelerate) CPU paths
+        let gpuStartBytes : UInt64;     // Process footprint when the GPU section began (its Δ is measured from here)
+        let cpuStartBytes : UInt64;     // Process footprint when the scalar CPU section began
+        let cpuSIMDStartBytes : UInt64; // Process footprint when the SIMD CPU section began
         let maxAbsDifference : (Float,Float,Float);   // Largest disagreement per pair of paths: (GPU vs CPU, CPU vs CPU SIMD, GPU vs CPU SIMD)
 
         var speedup : Double { self.cpuSeconds / self.gpuSeconds; }                         // warm GPU vs 1-thread CPU
@@ -65,9 +68,11 @@ enum PerformanceBenchmark {
 
         /// A multi-line report suitable for the console
         var report : String {
-            let gpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.gpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
-            let cpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
-            let cpuSIMDDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuSIMDPeakBytes) - Int64(bitPattern: self.baselineBytes));
+            // Each section's Δ is its peak minus the footprint when that section began, so memory an earlier
+            // section hasn't finished releasing isn't counted against (or hidden from) the next one
+            let gpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.gpuPeakBytes) - Int64(bitPattern: self.gpuStartBytes));
+            let cpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuPeakBytes) - Int64(bitPattern: self.cpuStartBytes));
+            let cpuSIMDDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuSIMDPeakBytes) - Int64(bitPattern: self.cpuSIMDStartBytes));
             // Each speedup row pairs the scalar CPU baseline with the SIMD (Accelerate) one, so the GPU's lead can
             // be read against both the naive and the optimized CPU code side by side
             let speedupRow : (Double, Double) -> String = { scalar, simd in
@@ -87,11 +92,11 @@ enum PerformanceBenchmark {
               Warm vs \(self.coreCount)-thread   : \(speedupRow(self.parallelSpeedup, self.simdParallelSpeedup))
               Cold vs 1-thread    : \(speedupRow(self.coldSpeedup, self.coldSIMDSpeedup))
               Cold vs \(self.coreCount)-thread   : \(speedupRow(self.coldParallelSpeedup, self.coldSIMDParallelSpeedup))
-              — Peak memory (whole-process phys_footprint; Δ vs baseline) —
+              — Peak memory (whole-process phys_footprint; Δ = section peak − section start) —
               Baseline            : \(PerformanceBenchmark.formatBytes(self.baselineBytes))
-              GPU peak            : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta))
-              CPU peak (scalar)   : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta))
-              CPU peak (SIMD)     : \(PerformanceBenchmark.formatBytes(self.cpuSIMDPeakBytes)) (Δ \(cpuSIMDDelta))
+              GPU peak            : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta) from section start \(PerformanceBenchmark.formatBytes(self.gpuStartBytes)))
+              CPU peak (scalar)   : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta) from section start \(PerformanceBenchmark.formatBytes(self.cpuStartBytes)))
+              CPU peak (SIMD)     : \(PerformanceBenchmark.formatBytes(self.cpuSIMDPeakBytes)) (Δ \(cpuSIMDDelta) from section start \(PerformanceBenchmark.formatBytes(self.cpuSIMDStartBytes)))
               — Accuracy (largest |Δ| between the ZNCC matrices; ~1e-6 to 1e-4 is rounding) —
               GPU vs CPU scalar   : \(String(format: "%.2e", self.maxAbsDifference.0))
               GPU vs CPU SIMD     : \(String(format: "%.2e", self.maxAbsDifference.2))
@@ -121,7 +126,7 @@ enum PerformanceBenchmark {
         var gpuCold = 0.0;
         var gpuBest = Double.greatestFiniteMagnitude;
         var gpuMatrix : [Float] = [];
-        let gpuPeak = await Self.measuringPeakFootprint {
+        let gpuFootprint = await Self.measuringPeakFootprint {
             let coldStart = Date();
             guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
             gpuCold = Date().timeIntervalSince(coldStart);
@@ -139,7 +144,7 @@ enum PerformanceBenchmark {
         var cpuBest = Double.greatestFiniteMagnitude;
         var cpuParallelBest = Double.greatestFiniteMagnitude;
         var cpuMatrix : [Float] = [];
-        let cpuPeak = await Self.measuringPeakFootprint {
+        let cpuFootprint = await Self.measuringPeakFootprint {
             let prepared = images.map { Self.prepare($0) };
             for _ in 0..<max(1, runs) {
                 let start = Date();
@@ -157,7 +162,7 @@ enum PerformanceBenchmark {
         var cpuSIMDBest = Double.greatestFiniteMagnitude;
         var cpuParallelSIMDBest = Double.greatestFiniteMagnitude;
         var cpuSIMDMatrix : [Float] = [];
-        let cpuSIMDPeak = await Self.measuringPeakFootprint {
+        let cpuSIMDFootprint = await Self.measuringPeakFootprint {
             let prepared = images.map { Self.prepareAccelerate($0) };
             for _ in 0..<max(1, runs) {
                 let start = Date();
@@ -174,7 +179,8 @@ enum PerformanceBenchmark {
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
                       cpuSeconds: cpuBest, cpuSIMDSeconds: cpuSIMDBest, cpuParallelSeconds: cpuParallelBest, cpuParallelSIMDSeconds: cpuParallelSIMDBest,
-                      baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak, cpuSIMDPeakBytes: cpuSIMDPeak,
+                      baselineBytes: baseline, gpuPeakBytes: gpuFootprint.peak, cpuPeakBytes: cpuFootprint.peak, cpuSIMDPeakBytes: cpuSIMDFootprint.peak,
+                      gpuStartBytes: gpuFootprint.start, cpuStartBytes: cpuFootprint.start, cpuSIMDStartBytes: cpuSIMDFootprint.start,
                       maxAbsDifference: Self.maxAbsDifferencePerPath(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
     }
 
@@ -381,10 +387,12 @@ enum PerformanceBenchmark {
         func consider(_ value: UInt64) { if value > self.peak { self.peak = value; } }
     }
 
-    /// Runs `body`, polling the process footprint on a background task throughout, and returns the peak seen
-    private static func measuringPeakFootprint(_ body: () async -> Void) async -> UInt64 {
+    /// Runs `body`, polling the process footprint on a background task throughout. Returns the footprint when the
+    /// section started alongside the peak seen, so a section's own working set is peak - start
+    private static func measuringPeakFootprint(_ body: () async -> Void) async -> (start: UInt64, peak: UInt64) {
         let tracker = PeakTracker();
-        await tracker.consider(Self.currentFootprintBytes());
+        let start : UInt64 = Self.currentFootprintBytes();
+        await tracker.consider(start);
         // Sample on a detached task so it keeps polling on its own thread while `body` occupies this one
         let sampler = Task.detached {
             while !Task.isCancelled {
@@ -395,12 +403,12 @@ enum PerformanceBenchmark {
         await body();
         await tracker.consider(Self.currentFootprintBytes());
         sampler.cancel();
-        return await tracker.peak;
+        return (start: start, peak: await tracker.peak);
     }
 
     /// The current process memory footprint in bytes (phys_footprint — the same figure Xcode's memory gauge
     /// and the system's memory-limit accounting use). Returns 0 if the query fails
-    private static func currentFootprintBytes() -> UInt64 {
+    private static nonisolated func currentFootprintBytes() -> UInt64 {
         var info = task_vm_info_data_t();
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size);
         let result = withUnsafeMutablePointer(to: &info) { infoPtr in
