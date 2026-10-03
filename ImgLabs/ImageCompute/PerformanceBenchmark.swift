@@ -42,13 +42,16 @@ enum PerformanceBenchmark {
         let cpuParallelSIMDSeconds : Double; // Multi-threaded CPU SIMD across all cores (best of timed passes)
         let baselineBytes : UInt64;     // Process footprint before either path allocated its working set
         let gpuPeakBytes : UInt64;      // Peak process footprint observed during the GPU path
-        let cpuPeakBytes : UInt64;      // Peak process footprint observed during the CPU paths
-        let maxAbsDifference : (Float,Float,Float);   // Largest disagreement between the paths
+        let cpuPeakBytes : UInt64;      // Peak process footprint observed during the scalar CPU paths
+        let cpuSIMDPeakBytes : UInt64;  // Peak process footprint observed during the SIMD (Accelerate) CPU paths
+        let maxAbsDifference : (Float,Float,Float);   // Largest disagreement per pair of paths: (GPU vs CPU, CPU vs CPU SIMD, GPU vs CPU SIMD)
 
         var speedup : Double { self.cpuSeconds / self.gpuSeconds; }                         // warm GPU vs 1-thread CPU
+        var simdSpeedup : Double { self.cpuSIMDSeconds / self.gpuSeconds; }                 // warm GPU vs 1-thread CPU using optimized math libraries
         var coldSpeedup : Double { self.cpuSeconds / self.gpuColdSeconds; }                 // cold GPU vs 1-thread CPU
         var coldSIMDSpeedup : Double { self.cpuSIMDSeconds / self.gpuColdSeconds; }         // cold GPU vs 1-thread CPU using optimized math libraries
         var parallelSpeedup : Double { self.cpuParallelSeconds / self.gpuSeconds; }         // warm GPU vs N-thread CPU
+        var simdParallelSpeedup : Double { self.cpuParallelSIMDSeconds / self.gpuSeconds; } // warm GPU vs N-thread CPU using optimized math libraries
         var coldParallelSpeedup : Double { self.cpuParallelSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU
         var coldSIMDParallelSpeedup : Double { self.cpuParallelSIMDSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU using optimized math libraries
 
@@ -64,23 +67,35 @@ enum PerformanceBenchmark {
         var report : String {
             let gpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.gpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
             let cpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
+            let cpuSIMDDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuSIMDPeakBytes) - Int64(bitPattern: self.baselineBytes));
+            // Each speedup row pairs the scalar CPU baseline with the SIMD (Accelerate) one, so the GPU's lead can
+            // be read against both the naive and the optimized CPU code side by side
+            let speedupRow : (Double, Double) -> String = { scalar, simd in
+                String(format: "%.2fx vs scalar  |  %.2fx vs SIMD", scalar, simd);
+            };
             return """
             ── ImgLabs ZNCC benchmark ─────────────────────────────
-              Workload      : \(self.imageCount) images at \(self.canvas)x\(self.canvas) px \
+              Workload            : \(self.imageCount) images at \(self.canvas)x\(self.canvas) px \
             (\(self.imageCount * (self.imageCount - 1) / 2) pairs), \(self.coreCount) cores
               — Time (best of timed passes) —
-              GPU cold (1st): \(String(format: "%.4f s", self.gpuColdSeconds)) (incl. pipeline compile + setup)
-              GPU warm      : \(String(format: "%.4f s", self.gpuSeconds))
-              CPU 1-thread  : \(String(format: "%.4f s", self.cpuSeconds))
-              CPU \(self.coreCount)-thread : \(String(format: "%.4f s", self.cpuParallelSeconds))
-              Speedup (warm): \(String(format: "%.2fx vs 1-thread  |  %.2fx vs %d-thread", self.speedup, self.parallelSpeedup, self.coreCount))
-              Speedup (cold): \(String(format: "%.2fx vs 1-thread  |  %.2fx vs %d-thread", self.coldSpeedup, self.coldParallelSpeedup, self.coreCount))
+              GPU cold (1st)      : \(String(format: "%.4f s", self.gpuColdSeconds)) (incl. pipeline compile + setup)
+              GPU warm            : \(String(format: "%.4f s", self.gpuSeconds))
+              CPU 1-thread        : \(String(format: "%.4f s", self.cpuSeconds)) scalar  |  \(String(format: "%.4f s", self.cpuSIMDSeconds)) SIMD
+              CPU \(self.coreCount)-thread       : \(String(format: "%.4f s", self.cpuParallelSeconds)) scalar  |  \(String(format: "%.4f s", self.cpuParallelSIMDSeconds)) SIMD
+              — GPU speedup (CPU time ÷ GPU time; above 1x means the GPU is faster) —
+              Warm vs 1-thread    : \(speedupRow(self.speedup, self.simdSpeedup))
+              Warm vs \(self.coreCount)-thread   : \(speedupRow(self.parallelSpeedup, self.simdParallelSpeedup))
+              Cold vs 1-thread    : \(speedupRow(self.coldSpeedup, self.coldSIMDSpeedup))
+              Cold vs \(self.coreCount)-thread   : \(speedupRow(self.coldParallelSpeedup, self.coldSIMDParallelSpeedup))
               — Peak memory (whole-process phys_footprint; Δ vs baseline) —
-              Baseline      : \(PerformanceBenchmark.formatBytes(self.baselineBytes))
-              GPU peak      : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta))
-              CPU peak      : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta))
-              — Accuracy —
-              Max |Δ|       : \(String(format: "%.2e", self.maxAbsDifference.0)) (GPU vs CPU agreement)
+              Baseline            : \(PerformanceBenchmark.formatBytes(self.baselineBytes))
+              GPU peak            : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta))
+              CPU peak (scalar)   : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta))
+              CPU peak (SIMD)     : \(PerformanceBenchmark.formatBytes(self.cpuSIMDPeakBytes)) (Δ \(cpuSIMDDelta))
+              — Accuracy (largest |Δ| between the ZNCC matrices; ~1e-6 to 1e-4 is rounding) —
+              GPU vs CPU scalar   : \(String(format: "%.2e", self.maxAbsDifference.0))
+              GPU vs CPU SIMD     : \(String(format: "%.2e", self.maxAbsDifference.2))
+              CPU scalar vs SIMD  : \(String(format: "%.2e", self.maxAbsDifference.1))
             ───────────────────────────────────────────────────────
             """;
         }
@@ -159,7 +174,7 @@ enum PerformanceBenchmark {
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
                       cpuSeconds: cpuBest, cpuSIMDSeconds: cpuSIMDBest, cpuParallelSeconds: cpuParallelBest, cpuParallelSIMDSeconds: cpuParallelSIMDBest,
-                      baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak,
+                      baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak, cpuSIMDPeakBytes: cpuSIMDPeak,
                       maxAbsDifference: Self.maxAbsDifferencePerPath(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
     }
 
