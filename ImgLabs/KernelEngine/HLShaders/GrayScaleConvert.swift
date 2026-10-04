@@ -86,21 +86,11 @@ public actor GrayScaleConvert : ComputeKernel, Sendable {
 
 
 nonisolated class GrayScaleKernelFactory : ComputeKernelCreatable {
-    // Shared cache of already-uploaded source buffers (BufferCache is an actor, so it stays Sendable)
-    private let bufferCache : BufferCache;
-
-    /// - Parameter bufferCache: Pass a shared instance to reuse buffers across factories; the default
-    ///   gives this factory its own private cache.
-    init(bufferCache: BufferCache = BufferCache()) {
-        self.bufferCache = bufferCache;
-    }
-
     static func getFactoryName() -> String {return GrayScaleConvert.getFunctionName();}
 
     func createKernel(bufable: any MTBufable, context: MetalComputeContext) async throws -> any ComputeKernel {
         // Get raw pixel values, convert to MTLBuffer (put in shared memory)
         let devToAlloc : MTLDevice = context.getDevice();
-        let rgbBuf : MTLBuffer = try await self.bufferCache.buffer(for: bufable, device: devToAlloc);
         // Grayscale result should contain one element per pixel in rgbaBuf (which has 4 elements per pixel)
         guard let numOfPixels : UInt32 = try? bufable.MTLBufferSize()/4 else {
             fatalError("Failed to get number of pixels");
@@ -110,7 +100,7 @@ nonisolated class GrayScaleKernelFactory : ComputeKernelCreatable {
         guard let resultAlloc = devToAlloc.makeBuffer(length: Int(numOfPixels) * MemoryLayout<Float>.stride, options: [.storageModeShared]) else {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
-        return await GrayScaleConvert(rgbBufArr: rgbBuf, resultBufArr: resultAlloc, pixelCount: numOfPixels);
+        return await GrayScaleConvert(rgbBufArr: try await bufable.toMTLBuffer(devToAlloc), resultBufArr: resultAlloc, pixelCount: numOfPixels);
     }
 }
 

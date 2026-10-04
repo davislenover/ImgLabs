@@ -123,9 +123,10 @@ class ImageCorrelation {
             grayScaleKernels.append(grayScaleKernel);
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleKernels); // Will suspend here until completion
-
+        
         // Collect the resident grayscale buffers and run the rest of the pipeline against them
         let grayscaleBuffers : [DeviceBuffer] = grayScaleImages.map { $0.buffer!; };
+        grayScaleKernels.removeAll(); // GrayScaleKernels are no longer needed, thus free them (already have the resulting buffers)
         return try await self.similarityMatrix(grayscaleBuffers: grayscaleBuffers);
     }
 
