@@ -236,6 +236,7 @@ class ImageCorrelation {
         // Populate results into a full square strided (row-major) matrix: element (row, col) at row * N + col
         // Only the lower triangle (including the diagonal) was computed, so mirror each value across
         // the diagonal since ZNCC is symmetric (zncc(i,j) == zncc(j,i))
+        // NOTE FOR FUTURE OPTIMIZATION: Dot product diagonals contain sum of squares
         let dotProducts : [Float] = dotProductResults.result;
         var znccResults : [Float] = Array(repeating: Float(0), count: imageCount * imageCount);
         for row in 0..<imageCount {
