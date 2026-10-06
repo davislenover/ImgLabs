@@ -123,28 +123,12 @@ enum PerformanceBenchmark {
         await Self.waitForFootprintToSettle();
         let baseline = Self.currentFootprintBytes();
 
-        // GPU path (cold + warm), with peak memory sampled across the whole section. The first run compiles
-        // pipeline states and pays one-time setup costs, so it is timed separately as the "cold" number
-        var gpuCold = 0.0;
-        var gpuBest = Double.greatestFiniteMagnitude;
-        var gpuMatrix : [Float] = [];
-        let gpuFootprint = await Self.measuringPeakFootprint {
-            let coldStart = Date();
-            guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
-            gpuCold = Date().timeIntervalSince(coldStart);
-            gpuMatrix = first;
-            for _ in 0..<max(1, runs) {
-                let start = Date();
-                _ = try? await correlation.similarityMatrix(images: images);
-                gpuBest = min(gpuBest, Date().timeIntervalSince(start));
-            }
-        };
-        guard !gpuMatrix.isEmpty else { return nil; }
+        // The CPU sections run first and the GPU section last. The GPU section frees tens of GB when it ends and
+        // that release can outlast the settle wait, which made a following CPU section start too high and
+        // under-report its own memory. The CPU sections free far less, so they go first
 
         // CPU paths (single and multi-threaded), with their own peak-memory section. The mean-centered arrays
         // built by prepare() are the dominant CPU allocation, so they are included in the measured window
-        // Wait for the GPU section's buffers to finish releasing first, so they don't inflate this section's start
-        await Self.waitForFootprintToSettle();
         var cpuBest = Double.greatestFiniteMagnitude;
         var cpuParallelBest = Double.greatestFiniteMagnitude;
         var cpuMatrix : [Float] = [];
@@ -180,6 +164,26 @@ enum PerformanceBenchmark {
                 cpuParallelSIMDBest = min(cpuParallelSIMDBest, Date().timeIntervalSince(start));
             }
         };
+
+        // GPU path (cold + warm), with peak memory sampled across the whole section. The first run compiles
+        // pipeline states and pays one-time setup costs, so it is timed separately as the "cold" number
+        // Settle first so the SIMD section's prepared arrays have been released
+        await Self.waitForFootprintToSettle();
+        var gpuCold = 0.0;
+        var gpuBest = Double.greatestFiniteMagnitude;
+        var gpuMatrix : [Float] = [];
+        let gpuFootprint = await Self.measuringPeakFootprint {
+            let coldStart = Date();
+            guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
+            gpuCold = Date().timeIntervalSince(coldStart);
+            gpuMatrix = first;
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                _ = try? await correlation.similarityMatrix(images: images);
+                gpuBest = min(gpuBest, Date().timeIntervalSince(start));
+            }
+        };
+        guard !gpuMatrix.isEmpty else { return nil; }
 
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
