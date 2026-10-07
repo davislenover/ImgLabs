@@ -9,8 +9,8 @@
 // Define offsets per pixel
 constant uint8_t ALPHA_IDX = 3;
 constant uint8_t RED_IDX = 0;
-constant uint8_t BLUE_IDX = 1;
-constant uint8_t GREEN_IDX = 2;
+constant uint8_t GREEN_IDX = 1;
+constant uint8_t BLUE_IDX = 2;
 constant uint8_t MAX_COLOR_VAL = 255;
 /*
  Takes R,G,B values in separate arrays, applies weights to produce a grayscale number, asumes 8-bits per channel
@@ -83,5 +83,130 @@ kernel void convertDCT(constant float* preConstMtx [[buffer(0)]],
             acc += T[u][y] * preConstMtx[v * N + y];
         }
         result[imageIndex * maxFreq * maxFreq + u * maxFreq + v] = acc;
+    }
+}
+
+/*
+ Performs convolution of an (assumed to be) 3x3 matrix over a grayscale (one element per pixel) image set (a 3D strided matrix where each 2D matrix is a list of values)
+  - Parameters:
+    - convolMtx: A 2D 3x3 matrix that will "slide" over each set of 2D matricies within inputMtx
+    - inputMtx: The input 3D strided matrix, with 2D matricies the convolMtx will "slide" over
+    - numRows: The row dimensions of each 2D matrix in inputMtx
+    - numColumns: The column dimensions of each 2D matrix in inputMtx
+    - depth: The number of 2D matricies within inputMtx
+    - result: A 3D strided matrix where each 2D matrix is the result of the convolution
+ The thread grid created should match a thread to a specific X,Y pixel in each image where X is multiplied by the number of images -- (i.e., X,Y,Z -> X*Z,Y,1)
+ */
+kernel void convoluteImage(constant float* convolMtx [[buffer(0)]],
+                           device const float* inputMtx [[buffer(1)]],
+                           constant uint32_t& numRows [[buffer(2)]],
+                           constant uint32_t& numColumns [[buffer(3)]],
+                           constant uint32_t& depth [[buffer(4)]],
+                           device float* result [[buffer(5)]],
+                           uint2 threadId [[thread_position_in_grid]]) {
+    
+    // Each thread will be responsible for one pixel position in one image (and thus, one pixel position in result)
+    // Grid is "3D" -- 2D but with a multiplied X from Z axis (which is very lage), better for cache
+    const uint32_t imgIdx = threadId.x / numColumns; // Z
+    const uint32_t imgPixelX = (threadId.x % numColumns);
+    const uint32_t imgPixelY = threadId.y;
+    
+    if (imgIdx >= depth || imgPixelX >= numColumns || imgPixelY >= numRows) {
+        return;
+    }
+    
+    // Get corresponding pixel offset
+    const uint64_t sliceStrideOffset = (uint64_t)imgIdx * numRows * numColumns;
+    const uint64_t strideResultOffset = sliceStrideOffset + (imgPixelY * numColumns) + imgPixelX;
+    
+    // Get the values of all values surrounding the center pixel (threadPixel), multiply by their corresponding value in the convolMtx, add to total
+    // Deal with edges by clamping the value to 0
+    float conVolPixelResult = 0;
+    // Loop through the 3x3 spatial coordinate offsets
+    for (int yOffset = -1; yOffset <= 1; yOffset++) {
+        for (int xOffset = -1; xOffset <= 1; xOffset++) {
+                
+            const int targetX = (int)imgPixelX + xOffset;
+            const int targetY = (int)imgPixelY + yOffset;
+            
+            // Center midpoint (xOffset=0, yOffset=0) evaluates to Index 4
+            const uint8_t conVolMtxOffset = ((yOffset + 1) * 3) + (xOffset + 1);
+            const float conVolValue = convolMtx[conVolMtxOffset];
+                
+            // If target is out of bounds, treat its value as 0 and continue to next pass
+            if (targetX < 0 || targetX >= (int)numColumns || targetY < 0 || targetY >= (int)numRows) {
+                continue;
+            }
+                
+            // Calculate the source thread input offset index
+            const uint64_t strideOffset = sliceStrideOffset + (targetY * numColumns) + targetX;
+            const float pixelValue = inputMtx[strideOffset];
+                
+            conVolPixelResult += (pixelValue * conVolValue);
+        }
+    }
+    result[strideResultOffset] = conVolPixelResult;
+}
+
+/*
+ Accumulates the sum and sum-of-squares of each 2D matrix within a 3D strided matrix (one pair of totals per z-axis set)
+ The final variance = (Σx²/N) - (Σx/N)² should be computed on the CPU once the totals are ready
+ The grid is 2D (groupsPerSlice, depth): the Y axis selects the set, the X axis selects which cooperating threadgroup within that set
+ Each threadgroup reduces its slice of the set in shared memory, then thread 0 atomically adds it's partials into that set's accumulator
+ groupSize (threads per threadgroup) should be a power of two (for the tree reduction) and as large as the device allows
+ - Parameters:
+    - inputMtx: The input 3D strided matrix, with 2D matricies (sets) laid back-to-back (each elemsPerSet floats)
+    - elemsPerSet: The number of elements in each 2D matrix (i.e., numRows * numColumns)
+    - depth: The number of 2D matricies within inputMtx
+    - groupsPerSlice: The number of threadgroups cooperating on each set (the grid's X dimension)
+    - accum: Two floats per set laid back-to-back accum[2*set] = Σx, accum[2*set+1] = Σx² (must start zeroed)
+ */
+kernel void calculateVariance(
+    device const float* inputMtx        [[buffer(0)]],
+    constant uint32_t& elemsPerSet      [[buffer(1)]],
+    constant uint32_t& depth            [[buffer(2)]],
+    constant uint32_t& groupsPerSlice   [[buffer(3)]],
+    device metal::atomic_float* accum   [[buffer(4)]], // (Σx, Σx²) per set, accumulated across cooperating threadgroups
+    threadgroup float2* localSharedMem  [[threadgroup(0)]], // (Σx, Σx²) partial per thread
+    uint2 groupId                       [[threadgroup_position_in_grid]],
+    uint2 localIdVec                    [[thread_position_in_threadgroup]],
+    uint2 groupSizeVec                  [[threads_per_threadgroup]])
+{
+    // The threadgroup is 1D (height 1), so only the x components carry the local index and group size
+    const uint32_t localId = localIdVec.x;
+    const uint32_t groupSize = groupSizeVec.x;
+
+    const uint32_t sliceIdx = groupId.y; // Which set (2D matrix) this threadgroup helps reduce
+    if (sliceIdx >= depth) { return; }
+    const uint32_t chunkIdx = groupId.x; // Which cooperating threadgroup within the set
+
+    device const float* set = inputMtx + (uint64_t)sliceIdx * elemsPerSet;
+
+    // All threadgroups for this set together stride over the whole set; each thread accumulates (Σx, Σx²)
+    // Starting offset is unique per (threadgroup, thread); the stride skips over every other cooperating thread
+    float2 partial = float2(0.0f, 0.0f);
+    const uint32_t stride = groupsPerSlice * groupSize; // Total threads cooperating on one set
+    for (uint32_t idx = chunkIdx * groupSize + localId; idx < elemsPerSet; idx += stride) {
+        const float v = set[idx];
+        partial.x += v;        // Σx
+        partial.y += v * v;    // Σx²
+    }
+    localSharedMem[localId] = partial;
+    threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+
+    // Tree-based reduction within the threadgroup (assumes groupSize is a power of two)
+    // float2 reduces both Σx and Σx² in a single pass
+    for (uint32_t s = groupSize / 2; s > 0; s >>= 1) {
+        if (localId < s) {
+            localSharedMem[localId] += localSharedMem[localId + s];
+        }
+        threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+    }
+
+    // Thread 0 folds this threadgroup's partials into the set's accumulator
+    // Only one atomic pair per threadgroup, so contention stays low even with many cooperating groups
+    if (localId == 0) {
+        metal::atomic_fetch_add_explicit(&accum[2 * sliceIdx],     localSharedMem[0].x, metal::memory_order::memory_order_relaxed);
+        metal::atomic_fetch_add_explicit(&accum[2 * sliceIdx + 1], localSharedMem[0].y, metal::memory_order::memory_order_relaxed);
     }
 }

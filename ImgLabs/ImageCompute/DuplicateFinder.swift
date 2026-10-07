@@ -14,7 +14,7 @@ import Foundation
 ///
 /// Each item points to a "parent" item. Follow the parent links upward and you eventually reach an item
 /// that points to itself -- that item is the group's "leader" (root). Two items are in the same group if,
-/// and only if, they have the same leader. The leader is just an internal label; it means nothing about
+/// and only if, they have the same leader. The leader is just an internal label, it means nothing about
 /// the items themselves
 struct UnionFind {
     // parent[i] is the item that i points to. When parent[i] == i, item i is a leader.
@@ -82,22 +82,38 @@ struct DuplicateGroup : Identifiable {
 
 /// Clusters images from a symmetric ZNCC similarity matrix into duplicate groups
 /// - Parameters:
-///     - matrix: an NxN matrix where matrix[i][j] is the similarity of image i and image j, in [-1, 1]
-///               It is symmetric (matrix[i][j] == matrix[j][i]) with 1.0 on the diagonal
+///     - matrix: a strided (row-major) NxN similarity matrix where element (i, j) at index i * n + j is the
+///               similarity of image i and image j, in [-1, 1]. It is symmetric with 1.0 on the diagonal
+///     - count: N, the number of images (the side length of the strided matrix)
 ///     - threshold: pairs whose similarity is >= this value are treated as duplicates of each other
+///     - hammingMatrix: strided (row-major) NxN Hamming-distance matrix of the images' perceptual hashes,
+///                      index-aligned with `matrix`. Empty (or misaligned) disables the hash signal, leaving
+///                      grouping purely ZNCC-driven
+///     - hashThreshold: pairs whose Hamming distance is <= this many bits are also treated as duplicates
+///                      Combined with the ZNCC rule using OR, so hashing only adds matches (never removes)
+///     - quality: per-image quality signals, index-aligned with the images. Empty when unavailable, in
+///                which case a quality-aware strategy falls back to the medoid
+///     - strategy: how to choose each cluster's keeper. Defaults to the medoid (matrix-only) behavior
 /// - Returns: one DuplicateGroup per cluster containing 2+ images. Images with no duplicates are omitted
-func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
-    let n = matrix.count;
+func duplicateGroups(matrix: [Float], count n: Int, threshold: Float, hammingMatrix: [UInt8] = [], hashThreshold: UInt8 = 8, quality: [ImageQuality] = [], strategy: KeeperStrategy = MedoidStrategy()) -> [DuplicateGroup] {
     guard n > 1 else { return []; } // Need at least two images for a duplicate to exist
 
-    // Connect every pair whose similarity clears the threshold
-    // Only scan the upper triangle (j starts at i+1) because the matrix is symmetric -- matrix[i][j]
-    // and matrix[j][i] are equal, so checking one side is enough and we skip the i == i diagonal
-    // The `where` clause is a filter on the loop: the body only runs for j values that satisfy it
+    // The hash signal is only usable when the Hamming matrix aligns with the image set; else ZNCC only
+    let hashesUsable = hammingMatrix.count == n * n;
+
+    // Connect every pair the ZNCC OR the perceptual hash considers a duplicate. ZNCC compares actual pixel
+    // correlation. The hash catches near-duplicates (crops, recompression, color shifts).
+    // Only scan the upper triangle (j starts at i+1) because the matrix is symmetric -- element (i, j)
+    // and (j, i) are equal, so checking one side is enough and we skip the i == i diagonal
     var unionFind = UnionFind(count: n);
     for i in 0..<n {
-        for j in (i + 1)..<n where matrix[i][j] >= threshold {
-            unionFind.union(i, j);
+        for j in (i + 1)..<n {
+            let znccMatch = matrix[i * n + j] >= threshold;
+            // Fewer differing bits than the cutoff means the images look near-identical to the hash
+            let hashMatch = hashesUsable && hammingMatrix[i * n + j] <= hashThreshold;
+            if znccMatch || hashMatch {
+                unionFind.union(i, j);
+            }
         }
     }
 
@@ -110,13 +126,13 @@ func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
     // Convert each multi-image bucket into a DuplicateGroup
     return buckets.values
         // .filter keeps only the elements for which the closure returns true. Inside a trailing closure,
-        // `$0` is the shorthand name for the current element -- here, one bucket (an [Int]). We keep only
+        // `$0` is the shorthand name for the current element, one bucket (an [Int]). We keep only
         // buckets with more than one image, since a lone image isn't a duplicate of anything
         .filter { $0.count > 1 }
         // .map transforms each element into something new, producing a new array. Here each bucket
         // (named `members` for clarity instead of using $0) becomes a DuplicateGroup
         .map { members in
-            let keeper = chooseKeeper(from: members, matrix: matrix);
+            let keeper = strategy.keeper(from: members, matrix: matrix, count: n, quality: quality);
             // members.filter { $0 != keeper } is every index in the cluster except the one we keep
             return DuplicateGroup(keep: keeper, duplicates: members.filter { $0 != keeper });
         }
@@ -126,29 +142,17 @@ func duplicateGroups(matrix: [[Float]], threshold: Float) -> [DuplicateGroup] {
         .sorted { $0.all.min()! < $1.all.min()!; };
 }
 
-// MARK: - Keeper selection
+// MARK: - Keeper selection helpers
 
-/// Picks the most representative image in a cluster: the medoid
-private func chooseKeeper(from members: [Int], matrix: [[Float]]) -> Int {
-    guard members.count > 1 else { return members[0]; }
-    // .max(by:) returns the "largest" element according to the ordering closure. The closure takes two
-    // elements (a, b) and returns true when a should be considered LESS THAN b. So .max returns the element
-    // that is never "less than" any other -- i.e. the one with the greatest average similarity
-    // The result is an Optional (it would be nil for an empty collection); `!` force-unwraps it, which is
-    // safe here because the guard above guarantees members is non-empty
-    return members.max(by: { a, b in
-        averageSimilarity(of: a, within: members, matrix: matrix)
-        < averageSimilarity(of: b, within: members, matrix: matrix);
-    })!;
-}
-
-/// Average similarity of one image to the other members of its cluster
-private func averageSimilarity(of index: Int, within members: [Int], matrix: [[Float]]) -> Float {
+/// Average similarity of one image to the other members of its cluster.
+/// - Parameter matrix: the strided (row-major) NxN similarity matrix; element (i, j) at i * count + j
+/// - Parameter count: N, the side length of the strided matrix
+func averageSimilarity(of index: Int, within members: [Int], matrix: [Float], count n: Int) -> Float {
     let others = members.filter { $0 != index }; // everyone in the cluster except `index` itself
     guard !others.isEmpty else { return 0; }
     // .reduce combines a collection into a single value. The first argument (Float(0)) is the starting
     // total; the closure is called once per element with ($0 = running total so far, $1 = current element),
-    // and whatever it returns becomes the new running total. So this sums matrix[index][other] over others
-    let total = others.reduce(Float(0)) { $0 + matrix[index][$1]; };
+    // and whatever it returns becomes the new running total. So this sums matrix[(index, other)] over others
+    let total = others.reduce(Float(0)) { $0 + matrix[index * n + $1]; };
     return total / Float(others.count); // divide the sum by the count to get the mean
 }

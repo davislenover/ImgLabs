@@ -10,7 +10,7 @@ skinparam componentStyle rectangle
 skinparam shadowing false
 
 component "SwiftUI UI\n(ContentView, DuplicateView)" as UI
-component "Image Compute\n(ImageCorrelation, DuplicateFinder)" as Compute
+component "Image Compute\n(ImageAnalysisSession, ImageCorrelation, ImageHash,\nImageSharpness, KeeperStrategy, DuplicateFinder)" as Compute
 component "Kernel Engine\n(MetalComputeContext, MetalRunner)" as Engine
 component "Metal Shaders\n(ImgMath.metal, ArrayMath.metal)" as Shaders
 

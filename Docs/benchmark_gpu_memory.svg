@@ -1,0 +1,79 @@
+<svg viewBox="0 0 960 420" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+<rect x="0" y="0" width="960" height="420" fill="#ffffff"/>
+<text x="480.0" y="26" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">ImgLabs ZNCC: Peak Memory Before and After the GPU Fixes @ 2048×2048 px</text>
+<line x1="233.4" y1="52" x2="253.4" y2="52" stroke="#2f6fed" stroke-width="2.5" stroke-linecap="round"/>
+<text x="259.4" y="56" font-size="12" fill="#374151">GPU after fixes</text>
+<line x1="382.4" y1="52" x2="402.4" y2="52" stroke="#2f6fed" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="6 4"/>
+<text x="408.4" y="56" font-size="12" fill="#374151">GPU before fixes</text>
+<line x1="538.0" y1="52" x2="558.0" y2="52" stroke="#14966b" stroke-width="2.5" stroke-linecap="round"/>
+<text x="564.0" y="56" font-size="12" fill="#374151">CPU vDSP (14 threads)</text>
+<text x="430.0" y="76.0" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Peak process memory (phys_footprint)</text>
+<g stroke="#e5e7eb" stroke-width="1">
+  <line x1="80" y1="362.0" x2="780" y2="362.0"/>
+  <line x1="80" y1="317.0" x2="780" y2="317.0"/>
+  <line x1="80" y1="272.0" x2="780" y2="272.0"/>
+  <line x1="80" y1="227.0" x2="780" y2="227.0"/>
+  <line x1="80" y1="182.0" x2="780" y2="182.0"/>
+  <line x1="80" y1="137.0" x2="780" y2="137.0"/>
+  <line x1="80" y1="92.0" x2="780" y2="92.0"/>
+</g>
+<line x1="80" y1="362" x2="780" y2="362" stroke="#9ca3af" stroke-width="1"/>
+<g font-size="10" fill="#6b7280" text-anchor="end">
+  <text x="74" y="365.5">0 GB</text>
+  <text x="74" y="320.5">10 GB</text>
+  <text x="74" y="275.5">20 GB</text>
+  <text x="74" y="230.5">30 GB</text>
+  <text x="74" y="185.5">40 GB</text>
+  <text x="74" y="140.5">50 GB</text>
+  <text x="74" y="95.5">60 GB</text>
+</g>
+<g font-size="10" fill="#6b7280" text-anchor="middle">
+  <text x="80.0" y="377">0</text>
+  <text x="180.0" y="377">100</text>
+  <text x="280.0" y="377">200</text>
+  <text x="380.0" y="377">300</text>
+  <text x="480.0" y="377">400</text>
+  <text x="580.0" y="377">500</text>
+  <text x="680.0" y="377">600</text>
+  <text x="780.0" y="377">700</text>
+</g>
+<text x="430.0" y="394" text-anchor="middle" font-size="11" fill="#6b7280">Images compared</text>
+<line x1="80" y1="146.0" x2="780" y2="146.0" stroke="#6b7280" stroke-width="1" stroke-dasharray="4 4"/>
+<text x="88.0" y="140.0" font-size="11" fill="#374151">48 GB of RAM</text>
+<path d="M105.0 346.5 L130.0 339.3 L180.0 322.2 L280.0 284.3 L380.0 246.2 L480.0 208.1 L580.0 170.0 L680.0 132.0" fill="none" stroke="#2f6fed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6 4"/>
+<circle cx="105.0" cy="346.5" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="130.0" cy="339.3" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="180.0" cy="322.2" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="280.0" cy="284.3" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="380.0" cy="246.2" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="480.0" cy="208.1" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="580.0" cy="170.0" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="680.0" cy="132.0" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<text x="689.0" y="136.0" font-size="11" fill="#374151">GPU before fixes</text>
+<path d="M82.0 355.6 L90.0 353.0 L105.0 350.1 L130.0 344.1 L180.0 329.6 L280.0 298.4 L380.0 267.2 L480.0 235.9 L580.0 205.1 L680.0 174.2 L765.0 147.4" fill="none" stroke="#2f6fed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="82.0" cy="355.6" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="90.0" cy="353.0" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="105.0" cy="350.1" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="130.0" cy="344.1" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="180.0" cy="329.6" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="280.0" cy="298.4" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="380.0" cy="267.2" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="480.0" cy="235.9" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="580.0" cy="205.1" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="680.0" cy="174.2" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="765.0" cy="147.4" r="3.5" fill="#2f6fed" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774.0" y="151.4" font-size="11" fill="#374151">GPU after fixes</text>
+<path d="M82.0 356.1 L90.0 355.8 L105.0 354.3 L130.0 350.9 L180.0 343.7 L280.0 326.7 L380.0 309.8 L480.0 293.2 L580.0 276.2 L680.0 259.2 L765.0 244.6" fill="none" stroke="#14966b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="82.0" cy="356.1" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="90.0" cy="355.8" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="105.0" cy="354.3" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="130.0" cy="350.9" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="180.0" cy="343.7" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="280.0" cy="326.7" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="380.0" cy="309.8" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="480.0" cy="293.2" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="580.0" cy="276.2" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="680.0" cy="259.2" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="765.0" cy="244.6" r="3.5" fill="#14966b" stroke="#ffffff" stroke-width="1.5"/>
+<text x="774.0" y="248.6" font-size="11" fill="#374151">CPU vDSP</text>
+</svg>

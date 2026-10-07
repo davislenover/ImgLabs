@@ -102,15 +102,16 @@ class ImageCorrelation {
     /// Compares each image within images array to all other images
     /// - Parameters:
     ///     - images: The images in an array to compare
-    /// - Returns: A matrix of floating point values, denoting how simillar image on row y to image on column x is (from 0 to 1, higher values being more simillar)
-    func similarityMatrix(images: [ImageData]) async throws -> [[Float]] {
+    /// - Returns: An NxN strided (row-major) matrix of floating point values, denoting how similar image on
+    ///            row y to image on column x is (from 0 to 1, higher values being more similar). Element
+    ///            (row, col) lives at index row * images.count + col
+    func similarityMatrix(images: [ImageData]) async throws -> [Float] {
         // Nothing to compare -- return an empty matrix (mirrors the old per-pair loop, which produced none)
         guard !images.isEmpty else { return []; }
-        // Intermediate arrays (grayscale, then the mean-centred and squared results) stay resident on the GPU
-        // between stages: each array kernel publishes its output as a DeviceBuffer, which the next factory reads directly
-        // Only the small scalars (means, sums) and the final matrix are read back to the CPU
 
-        // First compute the grayscale of every image
+        // First compute the grayscale of every image, then hand the grayscale buffers to the
+        // shared core below. Splitting the grayscale stage out lets a coordinator
+        // compute grayscale once and reuse it
         var grayScaleKernels : [ComputeKernel] = [];
         var grayScaleImages : [DeviceBufferResult] = [];
         let grayScaleFactory : GrayScaleKernelFactory = GrayScaleKernelFactory();
@@ -122,9 +123,29 @@ class ImageCorrelation {
             grayScaleKernels.append(grayScaleKernel);
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleKernels); // Will suspend here until completion
+        
+        // Collect the resident grayscale buffers and run the rest of the pipeline against them
+        let grayscaleBuffers : [DeviceBuffer] = grayScaleImages.map { $0.buffer!; };
+        grayScaleKernels.removeAll(); // GrayScaleKernels are no longer needed, thus free them (already have the resulting buffers)
+        return try await self.similarityMatrix(grayscaleBuffers: grayscaleBuffers);
+    }
 
-        // The mean and both subtraction factories share one BufferCache. With resident DeviceBuffers this is no
-        // longer for upload de-duplication (toMTLBuffer is a no-op passthrough now) -- it exists so the cache's
+    /// Builds the ZNCC similarity matrix from pre-computed grayscale buffers (one per image, in order)
+    /// This is the shared core of the similarity pipeline: everything except the grayscale stage
+    /// - Parameters:
+    ///     - grayscaleBuffers: The full-canvas grayscale of each image, already resident on the GPU
+    /// - Returns: An NxN symmetric strided (row-major) matrix; element (i, j) at index i * N + j is the ZNCC
+    ///            of image i and image j (in [-1, 1])
+    /// - Note: The grayscale buffers belong to the caller. This method reads them but never frees them,
+    ///         so a coordinator can keep them alive for another analysis (e.g. sharpness)
+    func similarityMatrix(grayscaleBuffers: [DeviceBuffer]) async throws -> [Float] {
+        guard !grayscaleBuffers.isEmpty else { return []; }
+        // Intermediate arrays (the mean-centred results) stay resident on the GPU between stages:
+        // each array kernel publishes its output as a DeviceBuffer, which the next factory reads directly.
+        // Only the small scalars (means) and the final matrix are read back to the CPU
+
+        // The mean and subtraction factories share one BufferCache. With resident DeviceBuffers this is no
+        // longer for upload de-duplication (toMTLBuffer is a no-op passthrough now) it exists so the cache's
         // hold on each intermediate can be dropped at a stage boundary. Clearing it, together with releasing the
         // kernels that read/wrote that buffer, is what lets the GPU actually reclaim a spent intermediate
         let statsCache : BufferCache = BufferCache();
@@ -133,77 +154,39 @@ class ImageCorrelation {
         let factoryMean : MeanValueFactory = MeanValueFactory(bufferCache: statsCache);
         var grayScaleMeanKernels : [ComputeKernel] = [];
         var grayScaleImageMeans : [FloatValueResult] = [];
-        for grayScaleImage in grayScaleImages {
-            let meanKernel : ComputeKernel = try await factoryMean.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
+        for grayscaleBuffer in grayscaleBuffers {
+            let meanKernel : ComputeKernel = try await factoryMean.createKernel(bufable: grayscaleBuffer, context: self.computeContext);
             let meanValue : FloatValueResult = FloatValueResult();
             await meanKernel.addObserver(meanValue);
             grayScaleImageMeans.append(meanValue);
             grayScaleMeanKernels.append(meanKernel);
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleMeanKernels);
-        
-        // Next find the subtraction of the grayscale values from the mean and also do the same but every result to the power of two
-        let factorySubtractionOne = SubtractionFactory(bufferCache: statsCache);
-        let factorySubtractionSqr = SubtractionFactory(bufferCache: statsCache);
-        factorySubtractionSqr.setPowValue(value:2.0);
+
+        // Next subtract each image's mean from its grayscale values. No separate squaring pass is needed: each
+        // image's sum of squares is the diagonal of the dot-product matrix below (dot(x - mean, x - mean))
+        let factorySubtraction = SubtractionFactory(bufferCache: statsCache);
         var grayScaleSubtractKernels : [any ComputeKernel] = [];
         var grayScaleSubtractArrays : [DeviceBufferResult] = [];
-        var grayScaleSubtractPow2Arrays : [DeviceBufferResult] = [];
-        for (index,grayScaleImage) in grayScaleImages.enumerated() {
+        for (index,grayscaleBuffer) in grayscaleBuffers.enumerated() {
             let subtractResult : DeviceBufferResult = DeviceBufferResult();
-            let subtractPow2Result : DeviceBufferResult = DeviceBufferResult();
-            let grayScaleImageMean : Float = grayScaleImageMeans[index].result;
-            factorySubtractionOne.setSubtractionValue(value: grayScaleImageMean);
-            factorySubtractionSqr.setSubtractionValue(value: grayScaleImageMean);
-            let subtractKernel : ComputeKernel = try await factorySubtractionOne.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
+            factorySubtraction.setSubtractionValue(value: grayScaleImageMeans[index].result);
+            let subtractKernel : ComputeKernel = try await factorySubtraction.createKernel(bufable: grayscaleBuffer, context: self.computeContext);
             await subtractKernel.addObserver(subtractResult);
-            let subtractPow2Kernel : ComputeKernel = try await factorySubtractionSqr.createKernel(bufable: grayScaleImage.buffer!, context: self.computeContext);
-            await subtractPow2Kernel.addObserver(subtractPow2Result);
             grayScaleSubtractKernels.append(subtractKernel);
-            grayScaleSubtractKernels.append(subtractPow2Kernel);
             grayScaleSubtractArrays.append(subtractResult);
-            grayScaleSubtractPow2Arrays.append(subtractPow2Result);
-            
         }
         try await MetalRunner.runCompute(from: self.computeContext, for: grayScaleSubtractKernels);
 
-        // Early release: the grayscale buffers were only needed to produce the subtractions above, so drop every
-        // reference to them now -- the grayscale kernels + results, the subtraction kernels that read them as
-        // input, and the shared cache's hold. Once all four are gone the GPU can reclaim that memory before the
-        // remaining stages run. The subtraction outputs survive via grayScaleSubtractArrays / grayScaleSubtractPow2Arrays
-        grayScaleKernels.removeAll();
-        grayScaleImages.removeAll();
+        // Early release: the subtraction kernels are spent, so drop them and the shared cache's hold on their
+        // inputs. The grayscale buffers themselves belong to the caller and are intentionally left intact as
+        // coordinator may still need them for another analysis. The subtraction outputs survive via
+        // grayScaleSubtractArrays, so only the mean-centred buffers remain resident for the dot stage
         grayScaleSubtractKernels.removeAll();
         await statsCache.clear();
 
-        // Find the summation of the power of two results from before
-        // Do this by finding the mean of the power 2 arrays, then multiply by their count
-        var meanPow2Vals : [FloatValueResult] = [];
-        var meanPow2Kernels : [ComputeKernel] = [];
-        for pow2ImageValueArray in grayScaleSubtractPow2Arrays {
-            let meanPow2Result : FloatValueResult = FloatValueResult();
-            let meanPow2Kernel : ComputeKernel = try await factoryMean.createKernel(bufable: pow2ImageValueArray.buffer!, context: self.computeContext);
-            await meanPow2Kernel.addObserver(meanPow2Result);
-            meanPow2Vals.append(meanPow2Result);
-            meanPow2Kernels.append(meanPow2Kernel);
-        }
-        try await MetalRunner.runCompute(from: self.computeContext, for: meanPow2Kernels);
-        var sumPow2 : [Float] = [];
-        for (index,meanPow2) in meanPow2Vals.enumerated() {
-            // Mean of the squared values * their count == the sum of squares (element count read from the buffer)
-            let elementCount : Float = Float(try grayScaleSubtractPow2Arrays[index].buffer!.MTLBufferSize());
-            sumPow2.append(meanPow2.result * elementCount);
-        }
-
-        // Early release: the squared arrays and the mean kernels that consumed them are spent (their sums are now
-        // in sumPow2). Drop them and re-clear the shared cache so only the mean-centred buffers remain resident
-        // for the dot stage
-        grayScaleSubtractPow2Arrays.removeAll();
-        meanPow2Kernels.removeAll();
-        await statsCache.clear();
-
         // Compute every pairwise dot product in a single batched dispatch instead of separate DotProduct
-        // kernels. The factory assembles the resident mean-centred buffers into one strided device buffer; the
+        // kernels. The factory assembles the resident mean-centred buffers into one strided device buffer, the
         // batched kernel reduces each lower-triangle pair (row, col), returning one [Float] of results
         let imageCount : Int = grayScaleSubtractArrays.count;
         let subtractBuffers : [any MTBufable] = grayScaleSubtractArrays.map { $0.buffer! };
@@ -214,56 +197,22 @@ class ImageCorrelation {
         await dotProductKernel.addObserver(dotProductResults);
         try await MetalRunner.runCompute(from: self.computeContext, for: [dotProductKernel]);
 
-        // Populate results into a full square matrix
+        // Populate results into a full square strided (row-major) matrix: element (row, col) at row * N + col
         // Only the lower triangle (including the diagonal) was computed, so mirror each value across
         // the diagonal since ZNCC is symmetric (zncc(i,j) == zncc(j,i))
         let dotProducts : [Float] = dotProductResults.result;
-        var znccResults : [[Float]] = Array(repeating: Array(repeating: Float(0), count: imageCount), count: imageCount);
+        // Each image's sum of squares is its diagonal entry, dot(x - mean, x - mean)
+        let sumPow2 : [Float] = (0..<imageCount).map { dotProducts[BatchedDotProductFactory.pairIndex(row: $0, col: $0)]; };
+        var znccResults : [Float] = Array(repeating: Float(0), count: imageCount * imageCount);
         for row in 0..<imageCount {
             for col in 0...row {
                 let dot : Float = dotProducts[BatchedDotProductFactory.pairIndex(row: row, col: col)];
                 let zncc : Float = dot / (sumPow2[row] * sumPow2[col]).squareRoot();
-                znccResults[row][col] = zncc;
-                znccResults[col][row] = zncc; // Mirror across the diagonal (no-op when row == col)
+                znccResults[row * imageCount + col] = zncc;
+                znccResults[col * imageCount + row] = zncc; // Mirror across the diagonal (no-op when row == col)
             }
         }
         return znccResults;
     }
-    
-    
-    private class FloatArrayResult : ResultObserver<[Float]>, MTBufable {
-        func toMTLBuffer(_ device: any MTLDevice) async throws -> any MTLBuffer {
-            guard let newBuf : MTLBuffer = device.makeBuffer(bytes: self.result, length: self.result.count*MemoryLayout<Float>.stride, options: .storageModeShared) else {
-                throw ImageError.failedToConvertDataToMTLBuffer;
-            }
-            return newBuf;
-        }
-        
-        func MTLBufferSize() throws -> UInt32 {
-            return UInt32(self.result.count);
-        }
-        
-        var result: [Float] = [];
-        func update(with: [Float]) {
-            self.result = with;
-        }
-    }
-
-    private class FloatValueResult : ResultObserver<Float> {
-        var result: Float = 0;
-        func update(with: Float) {
-            self.result = with;
-        }
-    }
-
-    /// Captures a kernel's resident output buffer (published as a DeviceBuffer) so it can be handed straight to
-    /// the next kernel's factory without a CPU round-trip
-    private class DeviceBufferResult : ResultObserver<DeviceBuffer> {
-        var buffer : DeviceBuffer? = nil;
-        func update(with: DeviceBuffer) {
-            self.buffer = with;
-        }
-    }
-
 }
 

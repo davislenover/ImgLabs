@@ -12,6 +12,7 @@ import Foundation
 import CoreGraphics
 import Metal
 import Darwin // mach task_info, for reading the process memory footprint
+import Accelerate
 
 enum PerformanceBenchmark {
 
@@ -36,16 +37,26 @@ enum PerformanceBenchmark {
         let gpuColdSeconds : Double;    // First GPU run, including one-time pipeline compilation & buffer setup
         let gpuSeconds : Double;        // Warm GPU run (best of the timed passes, pipelines already compiled)
         let cpuSeconds : Double;        // Single-threaded CPU (best of timed passes)
-        let cpuParallelSeconds : Double;// Multi-threaded CPU across all cores (best of timed passes)
+        let cpuSIMDSeconds : Double;    // Single-threaded CPU SIMD (best of timed passes)
+        let cpuParallelSeconds : Double; // Multi-threaded CPU across all cores (best of timed passes)
+        let cpuParallelSIMDSeconds : Double; // Multi-threaded CPU SIMD across all cores (best of timed passes)
         let baselineBytes : UInt64;     // Process footprint before either path allocated its working set
         let gpuPeakBytes : UInt64;      // Peak process footprint observed during the GPU path
-        let cpuPeakBytes : UInt64;      // Peak process footprint observed during the CPU paths
-        let maxAbsDifference : Float;   // Largest disagreement between the GPU and CPU matrices (should be ~0)
+        let cpuPeakBytes : UInt64;      // Peak process footprint observed during the scalar CPU paths
+        let cpuSIMDPeakBytes : UInt64;  // Peak process footprint observed during the SIMD (Accelerate) CPU paths
+        let gpuStartBytes : UInt64;     // Process footprint when the GPU section began (its Δ is measured from here)
+        let cpuStartBytes : UInt64;     // Process footprint when the scalar CPU section began
+        let cpuSIMDStartBytes : UInt64; // Process footprint when the SIMD CPU section began
+        let maxAbsDifference : (Float,Float,Float);   // Largest disagreement per pair of paths: (GPU vs CPU, CPU vs CPU SIMD, GPU vs CPU SIMD)
 
         var speedup : Double { self.cpuSeconds / self.gpuSeconds; }                         // warm GPU vs 1-thread CPU
+        var simdSpeedup : Double { self.cpuSIMDSeconds / self.gpuSeconds; }                 // warm GPU vs 1-thread CPU using optimized math libraries
         var coldSpeedup : Double { self.cpuSeconds / self.gpuColdSeconds; }                 // cold GPU vs 1-thread CPU
+        var coldSIMDSpeedup : Double { self.cpuSIMDSeconds / self.gpuColdSeconds; }         // cold GPU vs 1-thread CPU using optimized math libraries
         var parallelSpeedup : Double { self.cpuParallelSeconds / self.gpuSeconds; }         // warm GPU vs N-thread CPU
+        var simdParallelSpeedup : Double { self.cpuParallelSIMDSeconds / self.gpuSeconds; } // warm GPU vs N-thread CPU using optimized math libraries
         var coldParallelSpeedup : Double { self.cpuParallelSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU
+        var coldSIMDParallelSpeedup : Double { self.cpuParallelSIMDSeconds / self.gpuColdSeconds; } // cold GPU vs N-thread CPU using optimized math libraries
 
         /// A one-line summary suitable for a status label
         var summary : String {
@@ -57,25 +68,39 @@ enum PerformanceBenchmark {
 
         /// A multi-line report suitable for the console
         var report : String {
-            let gpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.gpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
-            let cpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuPeakBytes) - Int64(bitPattern: self.baselineBytes));
+            // Each section's Δ is its peak minus the footprint when that section began, so memory an earlier
+            // section hasn't finished releasing isn't counted against (or hidden from) the next one
+            let gpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.gpuPeakBytes) - Int64(bitPattern: self.gpuStartBytes));
+            let cpuDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuPeakBytes) - Int64(bitPattern: self.cpuStartBytes));
+            let cpuSIMDDelta = PerformanceBenchmark.formatSignedBytes(Int64(bitPattern: self.cpuSIMDPeakBytes) - Int64(bitPattern: self.cpuSIMDStartBytes));
+            // Each speedup row pairs the scalar CPU baseline with the SIMD (Accelerate) one, so the GPU's lead can
+            // be read against both the naive and the optimized CPU code side by side
+            let speedupRow : (Double, Double) -> String = { scalar, simd in
+                String(format: "%.2fx vs scalar  |  %.2fx vs SIMD", scalar, simd);
+            };
             return """
             ── ImgLabs ZNCC benchmark ─────────────────────────────
-              Workload      : \(self.imageCount) images at \(self.canvas)x\(self.canvas) px \
+              Workload            : \(self.imageCount) images at \(self.canvas)x\(self.canvas) px \
             (\(self.imageCount * (self.imageCount - 1) / 2) pairs), \(self.coreCount) cores
               — Time (best of timed passes) —
-              GPU cold (1st): \(String(format: "%.4f s", self.gpuColdSeconds)) (incl. pipeline compile + setup)
-              GPU warm      : \(String(format: "%.4f s", self.gpuSeconds))
-              CPU 1-thread  : \(String(format: "%.4f s", self.cpuSeconds))
-              CPU \(self.coreCount)-thread : \(String(format: "%.4f s", self.cpuParallelSeconds))
-              Speedup (warm): \(String(format: "%.2fx vs 1-thread  |  %.2fx vs %d-thread", self.speedup, self.parallelSpeedup, self.coreCount))
-              Speedup (cold): \(String(format: "%.2fx vs 1-thread  |  %.2fx vs %d-thread", self.coldSpeedup, self.coldParallelSpeedup, self.coreCount))
-              — Peak memory (whole-process phys_footprint; Δ vs baseline) —
-              Baseline      : \(PerformanceBenchmark.formatBytes(self.baselineBytes))
-              GPU peak      : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta))
-              CPU peak      : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta))
-              — Accuracy —
-              Max |Δ|       : \(String(format: "%.2e", self.maxAbsDifference)) (GPU vs CPU agreement)
+              GPU cold (1st)      : \(String(format: "%.4f s", self.gpuColdSeconds)) (incl. pipeline compile + setup)
+              GPU warm            : \(String(format: "%.4f s", self.gpuSeconds))
+              CPU 1-thread        : \(String(format: "%.4f s", self.cpuSeconds)) scalar  |  \(String(format: "%.4f s", self.cpuSIMDSeconds)) SIMD
+              CPU \(self.coreCount)-thread       : \(String(format: "%.4f s", self.cpuParallelSeconds)) scalar  |  \(String(format: "%.4f s", self.cpuParallelSIMDSeconds)) SIMD
+              — GPU speedup (CPU time ÷ GPU time; above 1x means the GPU is faster) —
+              Warm vs 1-thread    : \(speedupRow(self.speedup, self.simdSpeedup))
+              Warm vs \(self.coreCount)-thread   : \(speedupRow(self.parallelSpeedup, self.simdParallelSpeedup))
+              Cold vs 1-thread    : \(speedupRow(self.coldSpeedup, self.coldSIMDSpeedup))
+              Cold vs \(self.coreCount)-thread   : \(speedupRow(self.coldParallelSpeedup, self.coldSIMDParallelSpeedup))
+              — Peak memory (whole-process phys_footprint; Δ = section peak − section start) —
+              Baseline            : \(PerformanceBenchmark.formatBytes(self.baselineBytes))
+              GPU peak            : \(PerformanceBenchmark.formatBytes(self.gpuPeakBytes)) (Δ \(gpuDelta) from section start \(PerformanceBenchmark.formatBytes(self.gpuStartBytes)))
+              CPU peak (scalar)   : \(PerformanceBenchmark.formatBytes(self.cpuPeakBytes)) (Δ \(cpuDelta) from section start \(PerformanceBenchmark.formatBytes(self.cpuStartBytes)))
+              CPU peak (SIMD)     : \(PerformanceBenchmark.formatBytes(self.cpuSIMDPeakBytes)) (Δ \(cpuSIMDDelta) from section start \(PerformanceBenchmark.formatBytes(self.cpuSIMDStartBytes)))
+              — Accuracy (largest |Δ| between the ZNCC matrices; ~1e-6 to 1e-4 is rounding) —
+              GPU vs CPU scalar   : \(String(format: "%.2e", self.maxAbsDifference.0))
+              GPU vs CPU SIMD     : \(String(format: "%.2e", self.maxAbsDifference.2))
+              CPU scalar vs SIMD  : \(String(format: "%.2e", self.maxAbsDifference.1))
             ───────────────────────────────────────────────────────
             """;
         }
@@ -84,8 +109,8 @@ enum PerformanceBenchmark {
     /// Runs the benchmark end to end against a supplied set of images (e.g. the user's imported photos, or
     /// synthetic ones from `syntheticImages`). Every path scores the very same pixels
     /// - Parameters:
-    ///     - images: The images to compare; the matrix is images.count x images.count (needs at least two)
-    ///     - runs: How many timed passes to take per path; the fastest (least noisy) is reported
+    ///     - images: The images to compare. At least two images must be present
+    ///     - runs: How many timed passes to take per path. Fastest is reported
     ///     - context: The Metal context the GPU path runs against
     /// - Returns: A Result, or nil if fewer than two images were given or the GPU run could not be produced
     static func run(images: [ImageData], runs: Int = 3, context: MetalComputeContext) async -> Result? {
@@ -94,32 +119,20 @@ enum PerformanceBenchmark {
         let canvas = images.first?.currentSize()?.width ?? 0;
         let cores = ProcessInfo.processInfo.activeProcessorCount;
         let correlation = ImageCorrelation(MetalContext: context);
+        // Let any memory still being released (e.g. from the import) drain before taking the baseline
+        await Self.waitForFootprintToSettle();
         let baseline = Self.currentFootprintBytes();
 
-        // GPU path (cold + warm), with peak memory sampled across the whole section. The first run compiles
-        // pipeline states and pays one-time setup costs, so it is timed separately as the "cold" number
-        var gpuCold = 0.0;
-        var gpuBest = Double.greatestFiniteMagnitude;
-        var gpuMatrix : [[Float]] = [];
-        let gpuPeak = await Self.measuringPeakFootprint {
-            let coldStart = Date();
-            guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
-            gpuCold = Date().timeIntervalSince(coldStart);
-            gpuMatrix = first;
-            for _ in 0..<max(1, runs) {
-                let start = Date();
-                _ = try? await correlation.similarityMatrix(images: images);
-                gpuBest = min(gpuBest, Date().timeIntervalSince(start));
-            }
-        };
-        guard !gpuMatrix.isEmpty else { return nil; }
+        // The CPU sections run first and the GPU section last. The GPU section frees tens of GB when it ends and
+        // that release can outlast the settle wait, which made a following CPU section start too high and
+        // under-report its own memory. The CPU sections free far less, so they go first
 
-        // CPU paths (single- and multi-threaded), with their own peak-memory section. The mean-centered arrays
+        // CPU paths (single and multi-threaded), with their own peak-memory section. The mean-centered arrays
         // built by prepare() are the dominant CPU allocation, so they are included in the measured window
         var cpuBest = Double.greatestFiniteMagnitude;
         var cpuParallelBest = Double.greatestFiniteMagnitude;
-        var cpuMatrix : [[Float]] = [];
-        let cpuPeak = await Self.measuringPeakFootprint {
+        var cpuMatrix : [Float] = [];
+        let cpuFootprint = await Self.measuringPeakFootprint {
             let prepared = images.map { Self.prepare($0) };
             for _ in 0..<max(1, runs) {
                 let start = Date();
@@ -132,12 +145,52 @@ enum PerformanceBenchmark {
                 cpuParallelBest = min(cpuParallelBest, Date().timeIntervalSince(start));
             }
         };
+        
+        // SIMD CPU (settle first so the scalar section's prepared arrays have been released)
+        await Self.waitForFootprintToSettle();
+        var cpuSIMDBest = Double.greatestFiniteMagnitude;
+        var cpuParallelSIMDBest = Double.greatestFiniteMagnitude;
+        var cpuSIMDMatrix : [Float] = [];
+        let cpuSIMDFootprint = await Self.measuringPeakFootprint {
+            let prepared = images.map { Self.prepareAccelerate($0) };
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                cpuSIMDMatrix = Self.cpuSimilarityMatrixSIMD(prepared);
+                cpuSIMDBest = min(cpuSIMDBest, Date().timeIntervalSince(start));
+            }
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                _ = Self.cpuSimilarityMatrixParallelSIMD(prepared);
+                cpuParallelSIMDBest = min(cpuParallelSIMDBest, Date().timeIntervalSince(start));
+            }
+        };
+
+        // GPU path (cold + warm), with peak memory sampled across the whole section. The first run compiles
+        // pipeline states and pays one-time setup costs, so it is timed separately as the "cold" number
+        // Settle first so the SIMD section's prepared arrays have been released
+        await Self.waitForFootprintToSettle();
+        var gpuCold = 0.0;
+        var gpuBest = Double.greatestFiniteMagnitude;
+        var gpuMatrix : [Float] = [];
+        let gpuFootprint = await Self.measuringPeakFootprint {
+            let coldStart = Date();
+            guard let first = try? await correlation.similarityMatrix(images: images) else { return; }
+            gpuCold = Date().timeIntervalSince(coldStart);
+            gpuMatrix = first;
+            for _ in 0..<max(1, runs) {
+                let start = Date();
+                _ = try? await correlation.similarityMatrix(images: images);
+                gpuBest = min(gpuBest, Date().timeIntervalSince(start));
+            }
+        };
+        guard !gpuMatrix.isEmpty else { return nil; }
 
         return Result(imageCount: images.count, canvas: canvas, coreCount: cores,
                       gpuColdSeconds: gpuCold, gpuSeconds: gpuBest,
-                      cpuSeconds: cpuBest, cpuParallelSeconds: cpuParallelBest,
-                      baselineBytes: baseline, gpuPeakBytes: gpuPeak, cpuPeakBytes: cpuPeak,
-                      maxAbsDifference: Self.maxAbsDifference(gpuMatrix, cpuMatrix));
+                      cpuSeconds: cpuBest, cpuSIMDSeconds: cpuSIMDBest, cpuParallelSeconds: cpuParallelBest, cpuParallelSIMDSeconds: cpuParallelSIMDBest,
+                      baselineBytes: baseline, gpuPeakBytes: gpuFootprint.peak, cpuPeakBytes: cpuFootprint.peak, cpuSIMDPeakBytes: cpuSIMDFootprint.peak,
+                      gpuStartBytes: gpuFootprint.start, cpuStartBytes: cpuFootprint.start, cpuSIMDStartBytes: cpuSIMDFootprint.start,
+                      maxAbsDifference: Self.maxAbsDifferencePerPath(gpuMatrix, cpuMatrix, cpuSIMDMatrix));
     }
 
     /// Builds a set of synthetic random images at the given canvas size. Used as a fallback for the benchmark
@@ -183,16 +236,42 @@ enum PerformanceBenchmark {
         }
         return Prepared(centered: gray, sumSquares: sumSquares);
     }
+    
+    private static func prepareAccelerate(_ image: ImageData) -> Prepared {
+        let STRIDE : Int = 4;
+        // rgba is an array of uint8 values
+        guard let rgba = image.rawRGBA() else { return Prepared(centered: [], sumSquares: 0); }
+        let pixelCount = rgba.count / 4;
+        // Get individual channels as floating point values
+        // Pixels are stored as R,G,B,A so R is base, G is base + 1, B is base + 2
+        var red : [Float] = .init(repeating: 0, count: pixelCount);
+        var green : [Float] = .init(repeating: 0, count: pixelCount);
+        var blue : [Float] = .init(repeating: 0, count: pixelCount);
+        rgba.withUnsafeBufferPointer { src in
+            // Take every color channel from rgba, copy it to a float point value and store in respective channel array
+            vDSP_vfltu8(src.baseAddress!, STRIDE, &red, 1, vDSP_Length(pixelCount));
+            vDSP_vfltu8(src.baseAddress! + 1, STRIDE, &green, 1, vDSP_Length(pixelCount));
+            vDSP_vfltu8(src.baseAddress! + 2, STRIDE, &blue, 1, vDSP_Length(pixelCount));
+        }
+        // Grayscale: weighted sum of the (premultiplied) RGB channels, matching the Metal kernel
+        var gray : [Float] = vDSP.add(multiplication: (red,Self.redWeight), vDSP.add(multiplication: (green,Self.greenWeight), vDSP.multiply(Self.blueWeight, blue)));
+        let mean : Float = vDSP.mean(gray);
+        // Need centered values and sum of squares
+        gray = vDSP.add((-1)*mean,gray);
+        let sumSquareTotal : Float = vDSP.dot(gray, gray);
+        return Prepared(centered: gray, sumSquares: sumSquareTotal);
+    }
 
-    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it
-    private static func cpuSimilarityMatrix(_ prepared: [Prepared]) -> [[Float]] {
+    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it.
+    /// Returns a strided (row-major) NxN matrix; element (i, j) at i * n + j
+    private static func cpuSimilarityMatrix(_ prepared: [Prepared]) -> [Float] {
         let n = prepared.count;
-        var matrix = Array(repeating: Array(repeating: Float(0), count: n), count: n);
+        var matrix = [Float](repeating: 0, count: n * n);
         for i in 0..<n {
             for j in 0...i {
                 let zncc = Self.zncc(prepared[i], prepared[j]);
-                matrix[i][j] = zncc;
-                matrix[j][i] = zncc;
+                matrix[i * n + j] = zncc;
+                matrix[j * n + i] = zncc;
             }
         }
         return matrix;
@@ -201,8 +280,9 @@ enum PerformanceBenchmark {
     /// Multi-threaded reference: the same computation with the rows fanned across all cores via
     /// DispatchQueue.concurrentPerform. Row i owns cells (i, 0...i) and their mirror (0...i, i); those index
     /// sets are disjoint across rows, so the threads write non-overlapping memory (no locking needed)
-    /// Results go into a flat backing buffer to avoid mutating a shared [[Float]] from multiple threads
-    private static func cpuSimilarityMatrixParallel(_ prepared: [Prepared]) -> [[Float]] {
+    /// Results go into a flat backing buffer to avoid mutating shared rows from multiple threads.
+    /// Returns a strided (row-major) NxN matrix; element (i, j) at i * n + j
+    private static func cpuSimilarityMatrixParallel(_ prepared: [Prepared]) -> [Float] {
         let n = prepared.count;
         var flat = [Float](repeating: 0, count: n * n);
         flat.withUnsafeMutableBufferPointer { buffer in
@@ -214,8 +294,40 @@ enum PerformanceBenchmark {
                 }
             }
         }
-        // Reshape the flat buffer back into rows
-        return (0..<n).map { i in Array(flat[(i * n)..<(i * n + n)]) };
+        return flat;
+    }
+    
+    // MARK: - SIMD Versions for CPU
+    /// Single-threaded reference: computes the lower triangle of the ZNCC matrix and mirrors it.
+    /// Uses znccAccelerate
+    private static func cpuSimilarityMatrixSIMD(_ prepared: [Prepared]) -> [Float] {
+        let n = prepared.count;
+        var matrix = [Float](repeating: 0, count: n * n);
+        for i in 0..<n {
+            for j in 0...i {
+                let zncc = Self.znccAccelerate(prepared[i], prepared[j]);
+                matrix[i * n + j] = zncc;
+                matrix[j * n + i] = zncc;
+            }
+        }
+        return matrix;
+    }
+
+    /// Multi-threaded reference: the same computation with the rows fanned across all cores via
+    /// DispatchQueue.concurrentPerform. Uses znccAccelerate
+    private static func cpuSimilarityMatrixParallelSIMD(_ prepared: [Prepared]) -> [Float] {
+        let n = prepared.count;
+        var flat = [Float](repeating: 0, count: n * n);
+        flat.withUnsafeMutableBufferPointer { buffer in
+            DispatchQueue.concurrentPerform(iterations: n) { i in
+                for j in 0...i {
+                    let zncc = Self.znccAccelerate(prepared[i], prepared[j]);
+                    buffer[i * n + j] = zncc;
+                    buffer[j * n + i] = zncc;
+                }
+            }
+        }
+        return flat;
     }
 
     /// The ZNCC score for one pair of prepared (mean-centered) images
@@ -226,18 +338,35 @@ enum PerformanceBenchmark {
         let denom = (a.sumSquares * b.sumSquares).squareRoot();
         return denom > 0 ? dot / denom : 0;
     }
+    
+    private static func znccAccelerate(_ a: Prepared, _ b: Prepared) -> Float {
+        var dot : Float = 0;
+        dot = vDSP.dot(a.centered, b.centered);
+        let denom = (a.sumSquares * b.sumSquares).squareRoot();
+        return denom > 0 ? dot / denom : 0;
+    }
 
     // MARK: - Helpers
 
-    private static func maxAbsDifference(_ lhs: [[Float]], _ rhs: [[Float]]) -> Float {
-        guard lhs.count == rhs.count else { return .greatestFiniteMagnitude; }
+    /// The largest disagreement between any two of the three matrices (GPU, CPU, CPU SIMD), element by element.
+    /// Returns greatestFiniteMagnitude if the matrices aren't all the same size
+    private static func maxAbsDifference(_ first: [Float], _ second: [Float], _ third: [Float]) -> Float {
+        guard first.count == second.count, second.count == third.count else { return .greatestFiniteMagnitude; }
         var worst : Float = 0;
-        for i in 0..<lhs.count {
-            for j in 0..<lhs[i].count {
-                worst = max(worst, abs(lhs[i][j] - rhs[i][j]));
-            }
+        for i in 0..<first.count {
+            worst = max(worst, abs(first[i] - second[i]), abs(first[i] - third[i]), abs(second[i] - third[i]));
         }
         return worst;
+    }
+    
+    /// Returns largest disagreement between 3 paths as a tuple as measured by: first vs second, second vs third, first vs third
+    /// Ex: first = GPU, second = CPU, third = CPU SIMD
+    private static func maxAbsDifferencePerPath(_ first: [Float], _ second: [Float], _ third: [Float]) -> (Float,Float,Float) {
+        guard first.count == second.count, second.count == third.count else { return (.greatestFiniteMagnitude,.greatestFiniteMagnitude,.greatestFiniteMagnitude); }
+        let firstVsSecond : Float = vDSP.maximumMagnitude(vDSP.subtract(first, second)); // GPU vs CPU
+        let secondVsThird : Float = vDSP.maximumMagnitude(vDSP.subtract(second, third)); // CPU vs CPU SIMD
+        let firstVsThird : Float = vDSP.maximumMagnitude(vDSP.subtract(first, third)); // GPU vs CPU SIMD
+        return (firstVsSecond,secondVsThird,firstVsThird);
     }
 
     /// Generates a random opaque RGBA image at the given size. Content is irrelevant to timing; alpha is fixed
@@ -267,10 +396,12 @@ enum PerformanceBenchmark {
         func consider(_ value: UInt64) { if value > self.peak { self.peak = value; } }
     }
 
-    /// Runs `body`, polling the process footprint on a background task throughout, and returns the peak seen
-    private static func measuringPeakFootprint(_ body: () async -> Void) async -> UInt64 {
+    /// Runs `body`, polling the process footprint on a background task throughout. Returns the footprint when the
+    /// section started alongside the peak seen, so a section's own working set is peak - start
+    private static func measuringPeakFootprint(_ body: () async -> Void) async -> (start: UInt64, peak: UInt64) {
         let tracker = PeakTracker();
-        await tracker.consider(Self.currentFootprintBytes());
+        let start : UInt64 = Self.currentFootprintBytes();
+        await tracker.consider(start);
         // Sample on a detached task so it keeps polling on its own thread while `body` occupies this one
         let sampler = Task.detached {
             while !Task.isCancelled {
@@ -281,12 +412,30 @@ enum PerformanceBenchmark {
         await body();
         await tracker.consider(Self.currentFootprintBytes());
         sampler.cancel();
-        return await tracker.peak;
+        return (start: start, peak: await tracker.peak);
+    }
+
+    /// Waits until the process footprint stops falling, so memory an earlier section is still releasing isn't
+    /// counted in the next section's starting point. Polls every `intervalNanoseconds` and returns once a reading
+    /// has dropped by no more than `tolerance` since the previous one (or risen), giving up after `maxAttempts`
+    private static func waitForFootprintToSettle(tolerance: UInt64 = 50 * 1024 * 1024,
+                                                 intervalNanoseconds: UInt64 = 100_000_000,
+                                                 maxAttempts: Int = 50) async {
+        var previous : UInt64 = Self.currentFootprintBytes();
+        for _ in 0..<maxAttempts {
+            try? await Task.sleep(nanoseconds: intervalNanoseconds); // 100 ms by default, so 5s at most
+            let current : UInt64 = Self.currentFootprintBytes();
+            // Check previous <= current first so the subtraction below can't underflow
+            if previous <= current || previous - current <= tolerance {
+                return;
+            }
+            previous = current;
+        }
     }
 
     /// The current process memory footprint in bytes (phys_footprint — the same figure Xcode's memory gauge
     /// and the system's memory-limit accounting use). Returns 0 if the query fails
-    private static func currentFootprintBytes() -> UInt64 {
+    private static nonisolated func currentFootprintBytes() -> UInt64 {
         var info = task_vm_info_data_t();
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size);
         let result = withUnsafeMutablePointer(to: &info) { infoPtr in

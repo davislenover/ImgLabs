@@ -76,14 +76,18 @@ public actor DCT32: ComputeKernel {
     public func addObserver<O: ResultObserver>(_ observer: O) async {
         await self.observerStore.add(observer);
     }
-
+    
     public func notifyObservers() async {
-        await self.observerStore.callAll(with: DeviceBuffer(self.resultDCTs));
+        let rawPtr : UnsafeMutableRawPointer = self.resultDCTs.contents();
+        let count : Int = self.resultDCTs.length / MemoryLayout<Float>.stride;
+        let typedPointer : UnsafeMutablePointer<Float> = rawPtr.bindMemory(to: Float.self, capacity: count);
+        let result : [Float] = [Float](UnsafeBufferPointer(start: typedPointer, count: count));
+        await self.observerStore.callAll(with: result);
     }
 }
 
 
-class DCT32Factory: ComputeKernelCreatable {
+nonisolated class DCT32Factory: ComputeKernelCreatable {
     
     // preConstMtx[u][x] = α(u) · cos((2x+1)·u·π / 2N)
     // N = 32 (total number of pixels per row)
@@ -108,9 +112,13 @@ class DCT32Factory: ComputeKernelCreatable {
             throw KernelEngineError.failedToAllocateMTLBufferMemory;
         }
 
-        guard let numOfImages : UInt32 = try? bufable.MTLBufferSize() else {
+        // The bufable reports its total Float element count, not an image count. Each image is a
+        // 32x32 grayscale matrix (totalPixelsPerRow^2 floats), so divide to recover the image count
+        guard let totalElements : UInt32 = try? bufable.MTLBufferSize() else {
             fatalError("Failed to get number of Images");
         }
+        let pixelsPerImage : UInt32 = UInt32(PreConstMtx.totalPixelsPerRow * PreConstMtx.totalPixelsPerRow);
+        let numOfImages : UInt32 = totalElements / pixelsPerImage;
 
         // The output is unique per kernel, so it is never cached/shared -- 64 floats (8x8) per image
         guard let resultAlloc = devToAlloc.makeBuffer(length: MemoryLayout<Float>.stride*64*Int(numOfImages), options: [.storageModeShared]) else {
@@ -123,7 +131,7 @@ class DCT32Factory: ComputeKernelCreatable {
         return await DCT32(valuesArr: imagesBuf, numOfImgs: numOfImages, resultBuf: resultAlloc, preConst: preConstMtxBuf, maxFreq: UInt32(PreConstMtx.totalFreqWaves), numRowsAndColumns: UInt32(PreConstMtx.totalPixelsPerRow));
     }
     
-    private class PreConstMtx : MTBufable {
+    private nonisolated class PreConstMtx : MTBufable {
         public static let totalFreqWaves : Int = 8;
         public static let totalPixelsPerRow : Int = 32;
         

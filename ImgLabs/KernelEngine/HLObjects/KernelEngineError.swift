@@ -14,5 +14,6 @@ public enum KernelEngineError: Error {
     case failedToCreateComputeCommandEncoder
     case failedToDispatchThreads
     case failedToFindKernelCreateFunction(name: String)
+    case missingKernelResult
 }
 
