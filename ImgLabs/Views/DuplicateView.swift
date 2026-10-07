@@ -232,7 +232,7 @@ struct DuplicateView : View {
                 Slider(value: $threshold, in: 0.5...1.0)
                     .tint(.brandSecondary)
                     .help("How alike two images must be (by pixel correlation) to be grouped as duplicates");
-                Text("Higher groups only very-close matches; lower catches looser look-alikes.")
+                Text("Higher value means that groups will only form on very very-close matches. Lower values catch looser look-alikes.")
                     .font(.caption2).foregroundStyle(.secondary);
             }
 
@@ -250,7 +250,7 @@ struct DuplicateView : View {
                     Slider(value: $hashThreshold, in: 0...16, step: 1)
                         .tint(.brandSecondary)
                         .help("How many of the 64 perceptual-hash bits may differ and still count as a near-duplicate");
-                    Text("Catches crops, recompression and colour shifts that pixel matching can miss.")
+                    Text("Catches crops, recompression and colour shifts that pixel matching can miss. Lower hash means more close-match groups.")
                         .font(.caption2).foregroundStyle(.secondary);
                 }
             }

@@ -145,8 +145,8 @@ struct ControlSideBar : View {
 
                 // A one-line explanation on a subtle amber background so it reads as a hint, not a control
                 Text(model.containsImages()
-                     ? "Locked while images are imported — Clear to change."
-                     : "Lower is faster and lighter on memory; higher catches finer differences.")
+                     ? "Locked while images are imported. Please press clear to change this value."
+                     : "Lower is faster and lighter on memory however a higher value catches finer differences.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
