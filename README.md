@@ -6,7 +6,7 @@ ImgLabs finds duplicate and near-duplicate photos. It compares every pair of imp
 
 Under the app is the **Kernel Engine**, a reusable framework built for writing, batching and running Metal compute kernels. It's thread-safe, works with `async`/`await` and returns typed results. It's kept separate from the rest of ImgLabs, so it could be dropped into any Metal project that wants a cleaner way to work with GPU code.
 
-> **Status:** Usable from start to finish. You can import images, press **Analyze**, review the duplicate groups with an adjustable sensitivity slider and export the keepers. I'm still working on more operations and polishing the UI.
+> **Status:** Usable from start to finish. You can import images, press **Analyze**, review the duplicate groups with an adjustable sensitivity slider and export the keepers. More operations and polishing on the UI are in progress.
 
 ![ImgLabs finding duplicate images](ImgLabs/Images/Screenshot2.png)
 
@@ -59,7 +59,7 @@ The full write-up, including how everything was measured, cold and warm times, m
 | 7 | Review UI | In progress | 1 to 6 | Added help hints and more context to buttons and sliders, and redid the color palette |
 | 8 | App sandbox and entitlements | In progress | None | Needs access to the full library and permissions are still being updated. The app-scope bookmarks entitlement is pending (for the v1.0 Extended reference libraries) |
 | 9 | App Store assets | To do | 7 | Name check, icon, screenshots and description |
-| 10 | Update documentation | To do | 2 to 7 | Bring the README and diagrams in line with the shipped v1 (perceptual hash and Hamming distance, keeper logic, Photos and folder input) |
+| 10 | Update documentation | In Progress | 2 to 7 | Bring the README and diagrams in line with the shipped v1 (perceptual hash and Hamming distance, keeper logic, Photos and folder input) |
 
 ### v1.0 Extended: Reference Libraries
 
